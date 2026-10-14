@@ -189,6 +189,8 @@ export const BANNER_DURATION_MS = 2300;
 export const SAVE_KEY = 'summit-shot-save-v1';
 /** Отметка, что обучение пройдено — второй раз его не показываем. */
 export const TUTORIAL_KEY = 'summit-shot-tutorial-done';
+/** Где хранится раскладка сенсорного управления (позиции и размеры). */
+export const TOUCH_LAYOUT_KEY = 'summit-shot-touch-layout';
 
 // --- Обучение (уровень 0) --------------------------------------------------------
 
@@ -199,6 +201,23 @@ export const TUTORIAL_BEAM_Y = 620;
 export const TUTORIAL_SHOT_INTERVAL = 1.3;
 export const TUTORIAL_SHOT_SPEED = 230;
 export const GAME_TITLE = 'SUMMIT SHOT';
+
+// --- Сенсорное управление (телефоны и планшеты) ------------------------------------
+
+/** Радиус основания джойстика и ручки (в логических пикселях, при размере 1). */
+export const JOYSTICK_RADIUS = 58;
+export const JOYSTICK_KNOB_RADIUS = 24;
+/** Палец, коснувшийся экрана в пределах radius × это число от центра, берёт джойстик. */
+export const JOYSTICK_GRAB_MUL = 1.8;
+/** Мёртвая зона джойстика: малые отклонения не двигают героя (доля радиуса). */
+export const JOYSTICK_DEAD_ZONE = 0.15;
+/** Радиус кнопок рывка и приседа при размере 1. */
+export const TOUCH_BUTTON_RADIUS = 40;
+export const TOUCH_PAUSE_RADIUS = 22;
+/** Пределы размера элементов в настройках и шаг кнопок −/+. */
+export const TOUCH_SIZE_MIN = 0.6;
+export const TOUCH_SIZE_MAX = 1.8;
+export const TOUCH_SIZE_STEP = 0.1;
 
 export const DEPTH = {
   ground: 0,

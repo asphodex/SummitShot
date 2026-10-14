@@ -13,6 +13,7 @@ import {
 import { isDawn, nightness, phaseEffectText, phaseHint, phaseOf, phaseTitle, skyColor, strengthFor, type DayPhase } from './daycycle';
 import { Hud } from './hud';
 import { TUNING } from './tuning';
+import { isTouchDevice, openTouchEditor, TouchControls } from './touch';
 import { Tutorial } from './tutorial';
 import { BEAM_HALF_THICKNESS, generateLayout, type Arena, type Layout } from './level';
 import { getSeason, planLevel, type EnemyKind, type LevelPlan } from './season';
@@ -147,6 +148,8 @@ export class GameScene extends Phaser.Scene {
   private mouseShotQueued = false;
   /** Сценарий обучения — только на уровне 0. */
   private tutorial: Tutorial | null = null;
+  /** Сенсорное управление (только на телефонах и планшетах): джойстик, рывок, присед, автострельба. */
+  private touch: TouchControls | null = null;
   private levelTime = 0;
   /** Самая высокая точка, до которой игрок поднялся на этом уровне (в пикселях от старта). */
   private levelClimb = 0;
@@ -207,6 +210,7 @@ export class GameScene extends Phaser.Scene {
     this.createEffects();
     this.createWorldApi();
     this.setupInput();
+    this.touch = isTouchDevice() ? new TouchControls(this, () => this.togglePause()) : null;
     this.hud = new Hud(this, this.plan.biome.name, run.level);
     if (this.plan.isTutorial) this.startTutorial();
 
@@ -625,7 +629,8 @@ export class GameScene extends Phaser.Scene {
         e.shadow.destroy();
       },
       fireShot: (x, y, angle, speed) => this.fireShot(x, y, angle, speed, false),
-    });
+      skip: () => this.skipTutorial(),
+    }, this.touch !== null);
   }
 
   private skipTutorial(): void {
@@ -722,7 +727,7 @@ export class GameScene extends Phaser.Scene {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       sfx.unlock();
       // Запоминаем клик: даже очень короткое нажатие (между кадрами) даст выстрел.
-      if (pointer.leftButtonDown()) this.mouseShotQueued = true;
+      if (!this.touch && pointer.leftButtonDown()) this.mouseShotQueued = true;
     });
 
     kb.on('keydown-ESC', () => this.togglePause());
@@ -762,6 +767,8 @@ export class GameScene extends Phaser.Scene {
     this.updateDayCycle();
     this.updateFps();
     this.updateHurtOverlay(dt);
+    this.touch?.setActive(this.mode === 'play');
+    this.touch?.update(dt);
     this.hud.update({
       run: this.run,
       stamina: this.player.stamina,
@@ -807,7 +814,8 @@ export class GameScene extends Phaser.Scene {
     const x = (k.right.isDown || k.right2.isDown ? 1 : 0) - (k.left.isDown || k.left2.isDown ? 1 : 0);
     const y = (k.down.isDown || k.down2.isDown ? 1 : 0) - (k.up.isDown || k.up2.isDown ? 1 : 0);
     const len = Math.hypot(x, y);
-    return len > 0 ? { x: x / len, y: y / len } : { x: 0, y: 0 };
+    if (len > 0) return { x: x / len, y: y / len };
+    return this.touch ? this.touch.move() : { x: 0, y: 0 };
   }
 
   private updatePlayer(dt: number): void {
@@ -815,6 +823,8 @@ export class GameScene extends Phaser.Scene {
     const run = this.run;
     const move = this.moveInput();
     const pointer = this.input.activePointer;
+    // Нажатие "Рывка" во время переката сбрасываем, чтобы не было запоздалого второго.
+    const touchRoll = this.touch?.consumeRoll() ?? false;
 
     p.invuln -= dt;
     p.staminaDelay -= dt;
@@ -822,8 +832,8 @@ export class GameScene extends Phaser.Scene {
     if (p.roll > 0) {
       this.updateRoll(dt);
     } else {
-      p.crouch = this.keys.crouch.isDown || this.keys.crouch2.isDown || pointer.rightButtonDown();
-      if (Phaser.Input.Keyboard.JustDown(this.keys.roll)) this.tryRoll(move.x, move.y);
+      p.crouch = this.keys.crouch.isDown || this.keys.crouch2.isDown || pointer.rightButtonDown() || !!this.touch?.crouching;
+      if (Phaser.Input.Keyboard.JustDown(this.keys.roll) || touchRoll) this.tryRoll(move.x, move.y);
 
       const pool = this.poolAt(p.x, p.y);
       const speed = C.PLAYER_BASE_SPEED * run.speedMul
@@ -1025,7 +1035,7 @@ export class GameScene extends Phaser.Scene {
     p.bowAngle += turn * Math.min(1, dt * C.BOW_TURN_SPEED);
     p.bowKick = Math.max(0, p.bowKick - dt * 7);
 
-    const holding = (this.keys.fire.isDown || this.input.activePointer.leftButtonDown()) && this.mode === 'play';
+    const holding = this.wantsFire() && this.mode === 'play';
     const interval = C.FIRE_INTERVAL / this.run.fireRateMul;
     const targetDraw = holding ? Phaser.Math.Clamp(1 - p.fireCooldown / interval, 0, 1) : 0;
     p.bowDraw += (targetDraw - p.bowDraw) * Math.min(1, dt * 18);
@@ -1058,7 +1068,7 @@ export class GameScene extends Phaser.Scene {
   /** Куда смотрит лук между выстрелами: на ближайшего врага, иначе — по ходу движения. */
   private updateIdleAim(): void {
     const p = this.player;
-    if (this.input.activePointer.leftButtonDown()) return;
+    if (!this.touch && this.input.activePointer.leftButtonDown()) return;
     const target = this.nearestEnemy(p.x, p.y, C.AUTO_AIM_RANGE, []);
     if (target) p.aim = Math.atan2(target.y - p.y, target.x - p.x);
     else if (Math.hypot(p.vx, p.vy) > 60) p.aim = Math.atan2(p.vy, p.vx);
@@ -1138,10 +1148,8 @@ export class GameScene extends Phaser.Scene {
 
     if (p.burstLeft <= 0) this.updateIdleAim();
 
-    const pointer = this.input.activePointer;
-    const mouse = pointer.leftButtonDown() || this.mouseShotQueued;
-    const wantFire = this.keys.fire.isDown || mouse;
-    if (!wantFire || p.roll > 0 || p.fireCooldown > 0) return;
+    const mouse = !this.touch && (this.input.activePointer.leftButtonDown() || this.mouseShotQueued);
+    if (!this.wantsFire() || p.roll > 0 || p.fireCooldown > 0) return;
     this.mouseShotQueued = false;
 
     sfx.unlock();
@@ -1156,6 +1164,12 @@ export class GameScene extends Phaser.Scene {
     p.burstAngle = angle;
     if (this.run.ring && p.volley % C.RING_EVERY_VOLLEYS === 0) this.fireRing(C.RING_DAMAGE_MUL);
     p.squash = -0.1;
+  }
+
+  /** Хочет ли игрок стрелять: пробел или ЛКМ; на телефоне — сам, когда рядом есть враг. */
+  private wantsFire(): boolean {
+    if (this.touch) return this.nearestEnemy(this.player.x, this.player.y, C.AUTO_AIM_RANGE, []) !== null;
+    return this.keys.fire.isDown || this.input.activePointer.leftButtonDown() || this.mouseShotQueued;
   }
 
   /** Мышь — стрельба в курсор; пробел — автоприцел в ближайшего врага, иначе вперёд. */
@@ -2266,12 +2280,17 @@ export class GameScene extends Phaser.Scene {
       this.scene.restart({ run: loadRun() ?? newRun(this.run.season) });
     }));
     this.pauseButton(fixed, 484, 'Главное меню', false, () => this.leavePause(() => this.scene.start('MenuScene')));
+    if (this.touch) {
+      this.pauseButton(fixed, 546, 'Настроить управление', false, () => openTouchEditor(this, () => this.touch?.reloadLayout()));
+    }
 
-    const controls = [
-      'WASD — идти   ·   Пробел / ЛКМ — стрелять   ·   Shift — перекат',
-      'Ctrl / C / ПКМ — присесть   ·   Esc — продолжить',
-    ].join('\n');
-    fixed(this.add.text(cx, viewHeight(this) - 62, controls, {
+    const controls = this.touch
+      ? 'Джойстик — идти   ·   стрельба автоматическая   ·   Рывок и Присед — кнопки'
+      : [
+        'WASD — идти   ·   Пробел / ЛКМ — стрелять   ·   Shift — перекат',
+        'Ctrl / C / ПКМ — присесть   ·   Esc — продолжить',
+      ].join('\n');
+    fixed(this.add.text(cx, viewHeight(this) - (this.touch ? 36 : 62), controls, {
       ...style, fontSize: '15px', color: '#b8a8b8', strokeThickness: 3,
     }).setOrigin(0.5));
     this.pauseParts = parts;

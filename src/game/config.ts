@@ -16,6 +16,8 @@ export function createGame(parent: string): Phaser.Game {
     // На ноутбуках с двумя видеокартами просим браузер взять мощную.
     render: { powerPreference: 'high-performance' },
     scene: [MenuScene, GameScene, EndScene],
+    // Мультитач: джойстик и кнопка рывка/приседа одновременно.
+    input: { activePointers: 3 },
     // EXPAND: на широком экране видно больше мира по бокам, без чёрных полос.
     // Базовое поле 960x640 всегда целиком в кадре.
     scale: {

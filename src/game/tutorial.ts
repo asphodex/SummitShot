@@ -18,15 +18,26 @@ export interface TutorialHost {
   spawnDummy(x: number, y: number): Enemy;
   removeDummy(e: Enemy): void;
   fireShot(x: number, y: number, angle: number, speed: number): void;
+  skip(): void;
 }
 
 type StepId = 'shoot' | 'aim' | 'roll' | 'crouch' | 'exit';
 
-const STEPS: { id: StepId; text: string }[] = [
+type Step = { id: StepId; text: string };
+
+const DESKTOP_STEPS: Step[] = [
   { id: 'shoot', text: 'Нажми ПРОБЕЛ, чтобы выстрелить' },
   { id: 'aim', text: 'Наведи мышку на мишень и нажми ЛКМ' },
   { id: 'roll', text: 'Мишень стреляет! Нажми SHIFT и перекатись от выстрела' },
   { id: 'crouch', text: 'Зажми Ctrl, C или ПКМ, чтобы проползти под бревном' },
+  { id: 'exit', text: 'Отлично! Теперь иди к флагу на вершине' },
+];
+
+/** На телефоне лук стреляет сам, поэтому шага с прицелом мышью нет. */
+const TOUCH_STEPS: Step[] = [
+  { id: 'shoot', text: 'Лук стреляет сам — сбей мишень' },
+  { id: 'roll', text: 'Мишень стреляет! Нажми «Рывок» и увернись' },
+  { id: 'crouch', text: 'Зажми «Присед» и проползи под бревном' },
   { id: 'exit', text: 'Отлично! Теперь иди к флагу на вершине' },
 ];
 
@@ -48,28 +59,32 @@ export class Tutorial {
   private prompt: Phaser.GameObjects.Text;
   private hint: Phaser.GameObjects.Text;
   private marker: Phaser.GameObjects.Image;
+  private steps: Step[];
 
-  constructor(private host: TutorialHost) {
+  constructor(private host: TutorialHost, private touch: boolean) {
+    this.steps = touch ? TOUCH_STEPS : DESKTOP_STEPS;
     const scene = host.scene;
     this.prompt = scene.add.text(0, 112, '', {
       fontFamily: FONT, fontSize: '26px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#1a1020', strokeThickness: 6, backgroundColor: '#1a1020aa', padding: { x: 18, y: 10 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH.hud + 3);
-    this.hint = scene.add.text(0, 0, 'Enter — пропустить обучение', {
-      fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: '#d8c8b8', stroke: '#1a1020', strokeThickness: 4,
+    this.hint = scene.add.text(0, 0, touch ? 'Пропустить обучение »' : 'Enter — пропустить обучение', {
+      fontFamily: FONT, fontSize: touch ? '18px' : '15px', fontStyle: 'bold', color: '#d8c8b8', stroke: '#1a1020', strokeThickness: 4,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH.hud + 3).setAlpha(0.8);
+    // Без клавиатуры пропуск — нажатием на подсказку.
+    if (touch) this.hint.setPadding(12, 8, 12, 8).setInteractive().on('pointerdown', () => host.skip());
     this.marker = scene.add.image(0, 0, 'ring').setTint(0xffd23f).setVisible(false).setDepth(DEPTH.pool + 1);
     scene.tweens.add({ targets: this.marker, alpha: 0.35, duration: 450, yoyo: true, repeat: -1 });
     this.next();
   }
 
   private get step(): StepId {
-    return STEPS[Math.max(0, this.index)].id;
+    return this.steps[Math.max(0, this.index)].id;
   }
 
   /** Самая верхняя точка, куда пускаем героя: за бревно — только на шаге с приседом. */
   minPlayerY(): number {
-    return this.index < STEPS.findIndex((s) => s.id === 'crouch') ? TUTORIAL_BEAM_Y + BEAM_GUARD : -Infinity;
+    return this.index < this.steps.findIndex((s) => s.id === 'crouch') ? TUTORIAL_BEAM_Y + BEAM_GUARD : -Infinity;
   }
 
   /** На шаге с мышью мишень пробивают только стрелы, выпущенные кликом; на шаге с перекатом — никакие. */
@@ -91,7 +106,8 @@ export class Tutorial {
   update(dt: number): void {
     const scene = this.host.scene;
     this.prompt.setX(viewWidth(scene) / 2);
-    this.hint.setPosition(viewWidth(scene) / 2, viewHeight(scene) - 44);
+    // На телефоне внизу джойстик — подсказку ставим под заданием.
+    this.hint.setPosition(viewWidth(scene) / 2, this.touch ? 168 : viewHeight(scene) - 44);
 
     // Маркер подсвечивает цель шага: мишень или середину бревна.
     const d = this.dummy;
@@ -131,9 +147,9 @@ export class Tutorial {
   }
 
   private next(): void {
-    this.index = Math.min(this.index + 1, STEPS.length - 1);
+    this.index = Math.min(this.index + 1, this.steps.length - 1);
     this.advancing = false;
-    this.prompt.setText(STEPS[this.index].text).setColor('#fff6dc');
+    this.prompt.setText(this.steps[this.index].text).setColor('#fff6dc');
 
     const px = this.host.playerX();
     const py = this.host.playerY();

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { DEPTH, FONT, GAME_TITLE, LEVELS_PER_SEASON } from './constants';
 import { getSeason, planLevel } from './season';
 import { sfx } from './sfx';
+import { isTouchDevice, openTouchEditor } from './touch';
 import { biomeKey, createBiomeTextures, createCommonTextures, toColor } from './textures';
 import { loadRun, newRun, type RunState } from './upgrades';
 import { RENDER_SCALE, setupView, viewHeight, viewWidth } from './view';
@@ -68,8 +69,13 @@ export class MenuScene extends Phaser.Scene {
       y += 70;
     }
     this.button(y, 'Новый забег', () => this.start(newRun(season)), !saved);
+    const touch = isTouchDevice();
+    if (touch) this.button(y + 70, 'Настроить управление', () => openTouchEditor(this, () => undefined), false);
 
-    this.add.text(viewWidth(this) / 2, viewHeight(this) - 44, 'WASD / стрелки — идти     Shift — перекат     C / ПКМ — присесть     Esc — пауза', {
+    const controls = touch
+      ? 'Джойстик — идти     Стрельба — автоматически     Рывок и Присед — кнопки     II — пауза'
+      : 'WASD / стрелки — идти     Shift — перекат     C / ПКМ — присесть     Esc — пауза';
+    this.add.text(viewWidth(this) / 2, viewHeight(this) - 44, controls, {
       fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#ffffff', stroke: '#1a1020', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(DEPTH.hud);
   }
