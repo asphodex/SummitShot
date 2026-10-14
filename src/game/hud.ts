@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, FONT, LEVELS_PER_SEASON, ROLL_COST } from './constants';
 import { ABILITIES, type RunState } from './upgrades';
+import { viewHeight, viewWidth } from './view';
 
 const BAR_X = 46;
 const HP_BAR_W = 210;
@@ -55,7 +56,8 @@ export class Hud {
     const { run } = info;
     const g = this.g;
     // Размер экрана берём каждый кадр — окно могли растянуть.
-    const { width, height } = this.scene.scale;
+    const width = viewWidth(this.scene);
+    const height = viewHeight(this.scene);
     g.clear();
     this.levelText.setX(width - 16);
     this.bossText.setX(width / 2);

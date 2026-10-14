@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { DEPTH, FONT } from './constants';
 import { sfx } from './sfx';
 import type { Choice } from './upgrades';
+import { viewHeight, viewWidth } from './view';
 
 const CARD_W = 230;
 const CARD_H = 270;
@@ -24,7 +25,8 @@ export function showChoice<T extends string>(
     return o;
   };
 
-  const { width, height } = scene.scale;
+  const width = viewWidth(scene);
+  const height = viewHeight(scene);
   const dim = keep(scene.add.rectangle(width / 2, height / 2, width, height, 0x140a20, 0.72));
   dim.setScrollFactor(0).setDepth(DEPTH.modal).setAlpha(0);
   scene.tweens.add({ targets: dim, alpha: 1, duration: 200 });
@@ -98,7 +100,7 @@ function buildCard<T extends string>(
   keep: <O extends Phaser.GameObjects.GameObject>(o: O) => O,
   index: number,
 ): Card {
-  const y = scene.scale.height / 2 + 30;
+  const y = viewHeight(scene) / 2 + 30;
   const bg = keep(scene.add.graphics());
   const draw = (hover: boolean) => {
     bg.clear();

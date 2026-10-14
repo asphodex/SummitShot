@@ -4,8 +4,9 @@ import { DEPTH, FONT, GAME_HEIGHT, GAME_TITLE, GAME_WIDTH, LEVELS_PER_SEASON } f
 import type { EnemyKind } from './season';
 import { getSeason } from './season';
 import { sfx } from './sfx';
-import { createCommonTextures } from './textures';
+import { createCommonTextures, makeTexture } from './textures';
 import { ABILITIES, UPGRADES, newRun, type RunState } from './upgrades';
+import { setupView, viewHeight, viewWidth } from './view';
 
 const ENEMY_NAMES: Record<EnemyKind, string> = {
   crab: 'Краб', spitter: 'Плевун', bat: 'Летучая мышь', turtle: 'Черепаха', charger: 'Горный козёл',
@@ -44,6 +45,7 @@ export class EndScene extends Phaser.Scene {
   }
 
   create(): void {
+    setupView(this);
 
     // Окно изменило размер — пересобираем экран под новые пропорции.
     const onResize = () => this.scene.restart();
@@ -54,16 +56,16 @@ export class EndScene extends Phaser.Scene {
     this.cameras.main.fadeIn(900, 255, 246, 225);
 
     const season = getSeason(this.run.season);
-    const title = this.add.text(this.scale.width / 2, 58, 'ВЕРШИНА ПОКОРЕНА!', {
+    const title = this.add.text(viewWidth(this) / 2, 58, 'ВЕРШИНА ПОКОРЕНА!', {
       fontFamily: FONT, fontSize: '50px', fontStyle: 'bold', color: '#fff6dc', stroke: '#1a1020', strokeThickness: 9,
     }).setOrigin(0.5).setScale(0.5).setDepth(DEPTH.hud);
     this.tweens.add({ targets: title, scale: 1, duration: 700, ease: 'Back.Out' });
-    this.add.text(this.scale.width / 2, 110, `Сезон «${season.name}» · ${LEVELS_PER_SEASON}/${LEVELS_PER_SEASON} уровней · герой спасён`, {
+    this.add.text(viewWidth(this) / 2, 110, `Сезон «${season.name}» · ${LEVELS_PER_SEASON}/${LEVELS_PER_SEASON} уровней · герой спасён`, {
       fontFamily: FONT, fontSize: '19px', fontStyle: 'bold', color: '#ffd8a0', stroke: '#1a1020', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(DEPTH.hud);
 
     TABS.forEach((name, i) => {
-      const t = this.add.text(this.scale.width / 2 + (i - 1) * 150, 160, name, {
+      const t = this.add.text(viewWidth(this) / 2 + (i - 1) * 150, 160, name, {
         fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: '#1a1020', padding: { x: 18, y: 7 },
       }).setOrigin(0.5).setDepth(DEPTH.hud).setInteractive({ useHandCursor: true });
       t.on('pointerdown', () => this.showTab(i));
@@ -71,11 +73,11 @@ export class EndScene extends Phaser.Scene {
     });
 
     this.uiButtons = [
-      this.button(this.scale.width / 2 - 220, 'Поделиться', '#7fd8ff', () => this.share()),
-      this.button(this.scale.width / 2, 'Новый сезон', '#ffd23f', () => this.scene.start('GameScene', { run: newRun(this.run.season + 1) })),
-      this.button(this.scale.width / 2 + 220, 'В меню', '#f3ead6', () => this.scene.start('MenuScene')),
+      this.button(viewWidth(this) / 2 - 220, 'Поделиться', '#7fd8ff', () => this.share()),
+      this.button(viewWidth(this) / 2, 'Новый сезон', '#ffd23f', () => this.scene.start('GameScene', { run: newRun(this.run.season + 1) })),
+      this.button(viewWidth(this) / 2 + 220, 'В меню', '#f3ead6', () => this.scene.start('MenuScene')),
     ];
-    this.add.text(16, this.scale.height - 22, GAME_TITLE, {
+    this.add.text(16, viewHeight(this) - 22, GAME_TITLE, {
       fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: '#ffffff', stroke: '#1a1020', strokeThickness: 3,
     }).setDepth(DEPTH.hud).setAlpha(0.8);
 
@@ -91,10 +93,8 @@ export class EndScene extends Phaser.Scene {
   // --- Фон: рассвет над вулканом и улетающий вертолёт ----------------------------------
 
   private createBackdrop(): void {
-    if (!this.textures.exists('end-sky')) {
-      const tex = this.textures.createCanvas('end-sky', GAME_WIDTH, GAME_HEIGHT);
-      if (tex) {
-        const ctx = tex.getContext();
+    makeTexture(this, 'end-sky', GAME_WIDTH, GAME_HEIGHT, (ctx) => {
+      {
         const g = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
         g.addColorStop(0, '#2a2a6a');
         g.addColorStop(0.45, '#c86a8a');
@@ -119,14 +119,13 @@ export class EndScene extends Phaser.Scene {
         ctx.fill();
         ctx.fillStyle = '#ff6a2b';
         ctx.fillRect(420, 416, 120, 6);
-        tex.refresh();
       }
-    }
-    this.add.image(0, 0, 'end-sky').setOrigin(0).setDisplaySize(this.scale.width, this.scale.height);
+    });
+    this.add.image(0, 0, 'end-sky').setOrigin(0).setDisplaySize(viewWidth(this), viewHeight(this));
 
     // Небо растянуто на экран — дым ставим над жерлом с тем же масштабом.
-    const sx = this.scale.width / GAME_WIDTH;
-    const sy = this.scale.height / GAME_HEIGHT;
+    const sx = viewWidth(this) / GAME_WIDTH;
+    const sy = viewHeight(this) / GAME_HEIGHT;
     const smoke = this.add.particles(0, 0, 'soft', {
       x: { min: 440 * sx, max: 520 * sx }, y: 412 * sy, lifespan: 5000, speedY: { min: -40, max: -20 }, speedX: { min: -5, max: 15 },
       scale: { start: 1, end: 4 }, alpha: { start: 0.35, end: 0 }, tint: 0x5a3a4a, frequency: 260,
@@ -134,7 +133,7 @@ export class EndScene extends Phaser.Scene {
     smoke.setDepth(1);
 
     for (let i = 0; i < 5; i++) {
-      const cloud = this.add.image(Phaser.Math.Between(0, this.scale.width), Phaser.Math.Between(150, 380), 'soft')
+      const cloud = this.add.image(Phaser.Math.Between(0, viewWidth(this)), Phaser.Math.Between(150, 380), 'soft')
         .setScale(Phaser.Math.FloatBetween(4, 7), Phaser.Math.FloatBetween(1.2, 2)).setAlpha(0.35).setDepth(2);
       this.tweens.add({ targets: cloud, x: cloud.x + 200, duration: 20000 + i * 3000, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
     }
@@ -142,18 +141,18 @@ export class EndScene extends Phaser.Scene {
     // Вертолёт с героем улетает к горизонту.
     const heli = this.add.image(-120, 150, 'heli').setScale(0.45).setDepth(3);
     const rotor = this.add.image(heli.x, heli.y, 'rotor').setScale(0.45).setAlpha(0.7).setDepth(3);
-    this.tweens.add({ targets: heli, x: this.scale.width + 140, y: 120, duration: 16000, repeat: -1 });
+    this.tweens.add({ targets: heli, x: viewWidth(this) + 140, y: 120, duration: 16000, repeat: -1 });
     const spin = (_t: number, delta: number) => {
       rotor.setPosition(heli.x - 13, heli.y - 17).setRotation(rotor.rotation + delta * 0.03);
     };
     this.events.on(Phaser.Scenes.Events.UPDATE, spin);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.events.off(Phaser.Scenes.Events.UPDATE, spin));
 
-    this.add.rectangle(this.scale.width / 2, PANEL_TOP + PANEL_H / 2, PANEL_W, PANEL_H, 0x140a20, 0.72).setDepth(DEPTH.world);
+    this.add.rectangle(viewWidth(this) / 2, PANEL_TOP + PANEL_H / 2, PANEL_W, PANEL_H, 0x140a20, 0.72).setDepth(DEPTH.world);
   }
 
   private button(x: number, label: string, color: string, onClick: () => void): Phaser.GameObjects.Text {
-    const b = this.add.text(x, this.scale.height - 58, label, {
+    const b = this.add.text(x, viewHeight(this) - 58, label, {
       fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color: '#1a1020', backgroundColor: color, padding: { x: 22, y: 10 },
     }).setOrigin(0.5).setDepth(DEPTH.hud).setInteractive({ useHandCursor: true });
     b.on('pointerover', () => { b.setScale(1.06); sfx.select(); });
@@ -205,7 +204,7 @@ export class EndScene extends Phaser.Scene {
     const cols = 5;
     const w = PANEL_W / cols;
     tiles.forEach(([label, value], i) => {
-      const x = this.scale.width / 2 - PANEL_W / 2 + w * (i % cols) + w / 2;
+      const x = viewWidth(this) / 2 - PANEL_W / 2 + w * (i % cols) + w / 2;
       const y = PANEL_TOP + 24 + Math.floor(i / cols) * 104;
       const value$ = this.text(x, y, value, 34, '#fff3c4', 0.5).setScale(0.6);
       this.tweens.add({ targets: value$, scale: 1, duration: 400, delay: i * 50, ease: 'Back.Out' });
@@ -214,8 +213,8 @@ export class EndScene extends Phaser.Scene {
 
     const bosses = getSeason(this.run.season).biomes.map((b) => b.boss.name);
     const times = s.bossTimes.map((t, i) => `${bosses[i] ?? 'Босс'} — ${formatTime(t)}`);
-    this.text(this.scale.width / 2, PANEL_TOP + 236, 'Боссы', 18, '#ffd8a0', 0.5);
-    this.text(this.scale.width / 2, PANEL_TOP + 264, times.join('   ·   ') || '—', 14, '#e8dccc', 0.5)
+    this.text(viewWidth(this) / 2, PANEL_TOP + 236, 'Боссы', 18, '#ffd8a0', 0.5);
+    this.text(viewWidth(this) / 2, PANEL_TOP + 264, times.join('   ·   ') || '—', 14, '#e8dccc', 0.5)
       .setWordWrapWidth(PANEL_W - 40).setAlign('center');
   }
 
@@ -224,14 +223,14 @@ export class EndScene extends Phaser.Scene {
       .filter(([kind]) => kind !== 'boss')
       .sort((a, b) => b[1] - a[1]) as [EnemyKind, number][];
     if (kills.length === 0) {
-      this.text(this.scale.width / 2, PANEL_TOP + 140, 'Никого не победил — пацифист!', 20, '#e8dccc', 0.5);
+      this.text(viewWidth(this) / 2, PANEL_TOP + 140, 'Никого не победил — пацифист!', 20, '#e8dccc', 0.5);
       return;
     }
     const max = kills[0][1];
     const perCol = 7;
     kills.forEach(([kind, count], i) => {
       const col = Math.floor(i / perCol);
-      const x = this.scale.width / 2 - PANEL_W / 2 + 30 + col * (PANEL_W / 2);
+      const x = viewWidth(this) / 2 - PANEL_W / 2 + 30 + col * (PANEL_W / 2);
       const y = PANEL_TOP + 28 + (i % perCol) * 42;
       if (this.textures.exists(kind)) this.keep(this.add.image(x + 16, y + 10, kind).setScale(0.55).setDepth(DEPTH.hud));
       this.text(x + 44, y, ENEMY_NAMES[kind] ?? kind, 16);
@@ -246,18 +245,18 @@ export class EndScene extends Phaser.Scene {
   private drawBuild(): void {
     const counts = new Map<string, number>();
     for (const id of this.run.upgrades) counts.set(id, (counts.get(id) ?? 0) + 1);
-    this.text(this.scale.width / 2 - PANEL_W / 2 + 30, PANEL_TOP + 18, `Усиления (${this.run.upgrades.length})`, 18, '#ffd8a0');
+    this.text(viewWidth(this) / 2 - PANEL_W / 2 + 30, PANEL_TOP + 18, `Усиления (${this.run.upgrades.length})`, 18, '#ffd8a0');
     let i = 0;
     for (const u of UPGRADES) {
       const n = counts.get(u.id);
       if (!n) continue;
-      const x = this.scale.width / 2 - PANEL_W / 2 + 30 + (i % 2) * 190;
+      const x = viewWidth(this) / 2 - PANEL_W / 2 + 30 + (i % 2) * 190;
       const y = PANEL_TOP + 52 + Math.floor(i / 2) * 32;
       this.text(x, y, `${u.icon} ${u.title}${n > 1 ? ` ×${n}` : ''}`, 15, `#${u.color.toString(16).padStart(6, '0')}`);
       i++;
     }
 
-    const ax = this.scale.width / 2 + 30;
+    const ax = viewWidth(this) / 2 + 30;
     this.text(ax, PANEL_TOP + 18, `Абилки (${this.run.abilities.length})`, 18, '#ffd8a0');
     this.run.abilities.forEach((id, j) => {
       const a = ABILITIES.find((x) => x.id === id);
@@ -318,7 +317,7 @@ export class EndScene extends Phaser.Scene {
   }
 
   private toast(message: string): void {
-    const t = this.add.text(this.scale.width / 2, this.scale.height - 110, message, {
+    const t = this.add.text(viewWidth(this) / 2, viewHeight(this) - 110, message, {
       fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#1a1020', backgroundColor: '#9cffd6', padding: { x: 14, y: 6 },
     }).setOrigin(0.5).setDepth(DEPTH.modal).setAlpha(0);
     this.tweens.add({ targets: t, alpha: 1, y: '-=10', duration: 200, yoyo: true, hold: 1800, onComplete: () => t.destroy() });

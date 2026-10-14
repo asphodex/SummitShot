@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { Biome, EnemyKind } from './season';
+import { RENDER_SCALE } from './view';
 
 /**
  * Вся графика рисуется кодом на canvas — без файлов-ассетов.
@@ -34,13 +35,35 @@ export function toColor(hex: string): number {
 
 // --- Базовые кисти --------------------------------------------------------------
 
-function make(scene: Phaser.Scene, key: string, w: number, h: number, draw: (ctx: Ctx) => void): void {
+/**
+ * Рисует текстуру в RENDER_SCALE раз детальнее, но для игры она остаётся размером w x h:
+ * изображения делят размер на resolution, частицы берут логический размер кадра.
+ */
+export function makeTexture(scene: Phaser.Scene, key: string, w: number, h: number, draw: (ctx: Ctx) => void): void {
   if (scene.textures.exists(key)) return;
-  const tex = scene.textures.createCanvas(key, w, h);
+  const r = RENDER_SCALE;
+  const tex = scene.textures.createCanvas(key, Math.ceil(w * r), Math.ceil(h * r));
   if (!tex) return;
-  draw(tex.getContext());
+  const ctx = tex.getContext();
+  ctx.scale(r, r);
+  draw(ctx);
   tex.refresh();
+
+  tex.source[0].resolution = r;
+  const frame = tex.get();
+  frame.width = w;
+  frame.height = h;
+  frame.halfWidth = Math.floor(w / 2);
+  frame.halfHeight = Math.floor(h / 2);
+  frame.centerX = Math.floor(w / 2);
+  frame.centerY = Math.floor(h / 2);
+  // realWidth/realHeight (от них считается origin) читаются из data.sourceSize — его нет в типах Phaser.
+  const sourceSize = (frame as unknown as { data: { sourceSize: { w: number; h: number } } }).data.sourceSize;
+  sourceSize.w = w;
+  sourceSize.h = h;
 }
+
+const make = makeTexture;
 
 function ellipse(ctx: Ctx, x: number, y: number, rx: number, ry: number, fill: string): void {
   ctx.fillStyle = fill;
@@ -380,8 +403,9 @@ export function createDamageFont(scene: Phaser.Scene): void {
   });
   scene.cache.bitmapFont.add('dmg', Phaser.GameObjects.RetroFont.Parse(scene, {
     image: 'dmgfont',
-    width: DAMAGE_CELL_W,
-    height: DAMAGE_CELL_H,
+    // Шрифт разбирается по реальным пикселям текстуры (с учётом детализации).
+    width: Math.ceil(DAMAGE_CELL_W * RENDER_SCALE),
+    height: Math.ceil(DAMAGE_CELL_H * RENDER_SCALE),
     chars: DAMAGE_FONT_CHARS,
     charsPerRow: DAMAGE_FONT_CHARS.length,
     'offset.x': 0,
