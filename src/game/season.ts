@@ -6,8 +6,11 @@ import {
   LEVEL_MIN_LENGTH,
   LEVELS_PER_SEASON,
 } from './constants';
+import { ALL_ENEMY_KINDS, ENEMY_CLASSES, ENEMY_DEFS } from './enemies';
 
-export type EnemyKind = 'crab' | 'spitter' | 'bat' | 'charger' | 'shooter' | 'blob';
+export type EnemyKind =
+  | 'crab' | 'gnat' | 'spitter' | 'bat' | 'turret' | 'charger' | 'bomber'
+  | 'shooter' | 'blob' | 'turtle' | 'healer' | 'sniper' | 'mole';
 export type AmbientKind = 'motes' | 'leaves' | 'snow' | 'dust' | 'embers';
 export type TreeShape = 'palm' | 'bush' | 'pine' | 'cactus' | 'spire';
 export type BossPattern = 'burst' | 'fan' | 'spiral' | 'charge' | 'summon' | 'sweep' | 'meteor';
@@ -68,7 +71,7 @@ const ISLAND: Season = {
       foliage: '#2f9a55', foliageLight: '#5fcf6a', foliageDark: '#1c6340', trunk: '#7a5a3a',
       treeShape: 'bush', pool: '#3aa6a0', poolLight: '#7fdcc4', poolHurts: false,
       accent: '#ff5fa2', fog: '#c8f0b0', ambient: 'leaves',
-      enemies: ['bat', 'spitter', 'crab'],
+      enemies: ['bat', 'turtle'],
       boss: { name: 'Хищная росянка', color: '#e0457b', colorDark: '#8a1f4f', patterns: ['spiral', 'fan', 'sweep', 'summon'] },
     },
     {
@@ -79,7 +82,7 @@ const ISLAND: Season = {
       foliage: '#2f6a5a', foliageLight: '#4f9a7f', foliageDark: '#1d473f', trunk: '#6b4f3a',
       treeShape: 'pine', pool: '#a8d8f0', poolLight: '#e0f6ff', poolHurts: false,
       accent: '#7fb8ff', fog: '#f0f6ff', ambient: 'snow',
-      enemies: ['charger', 'bat'],
+      enemies: ['charger', 'mole'],
       boss: { name: 'Снежный як', color: '#f2f2f2', colorDark: '#7d8aa6', patterns: ['charge', 'sweep', 'meteor', 'burst'] },
     },
     {
@@ -90,7 +93,7 @@ const ISLAND: Season = {
       foliage: '#5fa36a', foliageLight: '#86c78a', foliageDark: '#3c7149', trunk: '#5fa36a',
       treeShape: 'cactus', pool: '#d9b06a', poolLight: '#f0d59a', poolHurts: false,
       accent: '#ffd25f', fog: '#ffe2bf', ambient: 'dust',
-      enemies: ['shooter', 'charger'],
+      enemies: ['shooter', 'bomber'],
       boss: { name: 'Скорпион-матриарх', color: '#3a3248', colorDark: '#1c1726', patterns: ['fan', 'sweep', 'summon', 'charge'] },
     },
     {
@@ -101,8 +104,8 @@ const ISLAND: Season = {
       foliage: '#ff7a2f', foliageLight: '#ffc04f', foliageDark: '#b23a1f', trunk: '#2b2026',
       treeShape: 'spire', pool: '#ff5a1f', poolLight: '#ffcf4f', poolHurts: true,
       accent: '#ffb03f', fog: '#5a3a3a', ambient: 'embers',
-      enemies: ['blob', 'shooter'],
-      boss: { name: 'Сердце кальдеры', color: '#ff6a2b', colorDark: '#7a1f1f', patterns: ['spiral', 'meteor', 'burst', 'sweep', 'fan'] },
+      enemies: ['blob', 'turret'],
+      boss: { name: 'Лавовый монстр', color: '#ff6a2b', colorDark: '#7a1f1f', patterns: ['spiral', 'meteor', 'burst', 'sweep', 'fan', 'summon'] },
     },
   ],
 };
@@ -155,6 +158,10 @@ export function getSeason(season: number): Season {
   return SEASONS[season % SEASONS.length];
 }
 
+/** Стиль раскладки уровня — меняется от уровня к уровню. */
+export type LayoutStyle = 'open' | 'groves' | 'walls' | 'wetlands' | 'canyon';
+const LAYOUT_STYLES: LayoutStyle[] = ['open', 'groves', 'walls', 'wetlands', 'canyon'];
+
 export interface LevelPlan {
   season: number;
   level: number;
@@ -164,6 +171,9 @@ export interface LevelPlan {
   length: number;
   enemyCount: number;
   enemyKinds: EnemyKind[];
+  layoutStyle: LayoutStyle;
+  /** true — враги стоят группами, false — россыпью. */
+  packs: boolean;
   /** Множитель силы врагов: растёт по ходу сезона и с каждым сезоном. */
   difficulty: number;
   obstacleDensity: number;
@@ -187,13 +197,6 @@ export function planLevel(season: number, level: number, seed: string): LevelPla
     ? BOSS_LEVEL_LENGTH
     : Phaser.Math.Clamp(Math.round(baseLength + rng.between(-450, 600)), LEVEL_MIN_LENGTH, LEVEL_MAX_LENGTH);
 
-  // Враги биома + иногда "гость" из прошлого биома.
-  const enemyKinds = [...biome.enemies];
-  if (biomeIndex > 0 && rng.frac() < 0.65) {
-    const guest = rng.pick(biomes[rng.between(0, biomeIndex - 1)].enemies);
-    if (!enemyKinds.includes(guest)) enemyKinds.push(guest);
-  }
-
   const perThousand = 3.4 + progress * 2.6;
   const enemyCount = isBoss ? 4 : Math.round((length / 1000) * perThousand) + rng.between(0, 2);
 
@@ -205,9 +208,67 @@ export function planLevel(season: number, level: number, seed: string): LevelPla
     isBoss,
     length,
     enemyCount,
-    enemyKinds,
+    enemyKinds: enemyMixFor(season, level, seed),
+    layoutStyle: isBoss ? 'open' : layoutStyleFor(season, level, seed),
+    packs: rng.frac() < 0.5,
     difficulty: 1 + progress * 2 + season * 0.9,
     obstacleDensity: 7 + progress * 5,
     rng,
   };
+}
+
+function biomeFor(season: number, level: number): Biome {
+  const biomes = getSeason(season).biomes;
+  return biomes[Math.min(Math.floor((level - 1) / BOSS_EVERY), biomes.length - 1)];
+}
+
+function rngFor(seed: string, season: number, level: number, salt: string): Phaser.Math.RandomDataGenerator {
+  return new Phaser.Math.RandomDataGenerator([`${seed}:${season}:${level}:${salt}`]);
+}
+
+/**
+ * Микс врагов уровня: 1–2 биомных врага (они меняются каждые 7 уровней вместе с биомом)
+ * + 0–2 общих, уже открытых к этому уровню. Предпочитаем классы, которых в миксе ещё нет.
+ */
+function rollMix(rng: Phaser.Math.RandomDataGenerator, biome: Biome, level: number): EnemyKind[] {
+  const local = rng.frac() < 0.6 ? [...biome.enemies] : [rng.pick(biome.enemies)];
+  const commons = ALL_ENEMY_KINDS.filter((k) => ENEMY_DEFS[k].common && ENEMY_DEFS[k].unlock <= level);
+  const commonCount = Math.min(commons.length, rng.between(0, Math.min(2, 1 + Math.floor(level / 10))));
+  const mix: EnemyKind[] = [...local];
+  for (let i = 0; i < commonCount; i++) {
+    const missing = ENEMY_CLASSES.filter((c) => !mix.some((k) => ENEMY_DEFS[k].cls === c));
+    let candidates = commons.filter((k) => !mix.includes(k) && missing.includes(ENEMY_DEFS[k].cls));
+    if (candidates.length === 0) candidates = commons.filter((k) => !mix.includes(k));
+    if (candidates.length === 0) break;
+    mix.push(rng.pick(candidates));
+  }
+  // Минимум два типа врагов на уровне — иначе скучно.
+  if (mix.length < 2) mix.push(...biome.enemies.filter((k) => !mix.includes(k)).slice(0, 1));
+  return mix;
+}
+
+function sameSet(a: EnemyKind[], b: EnemyKind[]): boolean {
+  return a.length === b.length && a.every((k) => b.includes(k));
+}
+
+/** Микс гарантированно отличается от микса прошлого уровня. */
+function enemyMixFor(season: number, level: number, seed: string): EnemyKind[] {
+  let mix = rollMix(rngFor(seed, season, level, 'mix'), biomeFor(season, level), level);
+  if (level <= 1) return mix;
+  const prev = rollMix(rngFor(seed, season, level - 1, 'mix'), biomeFor(season, level - 1), level - 1);
+  for (let attempt = 0; attempt < 6 && sameSet(mix, prev); attempt++) {
+    mix = rollMix(rngFor(seed, season, level, `mix-${attempt}`), biomeFor(season, level), level);
+  }
+  return mix;
+}
+
+function rollStyle(seed: string, season: number, level: number): LayoutStyle {
+  return rngFor(seed, season, level, 'style').pick(LAYOUT_STYLES);
+}
+
+/** Стиль раскладки не повторяет стиль прошлого уровня. */
+function layoutStyleFor(season: number, level: number, seed: string): LayoutStyle {
+  const style = rollStyle(seed, season, level);
+  if (level <= 1 || style !== rollStyle(seed, season, level - 1)) return style;
+  return LAYOUT_STYLES[(LAYOUT_STYLES.indexOf(style) + 1) % LAYOUT_STYLES.length];
 }

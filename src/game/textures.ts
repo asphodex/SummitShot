@@ -285,9 +285,111 @@ export function createCommonTextures(scene: Phaser.Scene): void {
     ellipse(ctx, 248, 17, 3, 6, WOOD);
   });
 
-  for (const kind of ['crab', 'spitter', 'bat', 'charger', 'shooter', 'blob'] as EnemyKind[]) {
+  for (const kind of Object.keys(ENEMY_COLORS) as EnemyKind[]) {
     make(scene, kind, 64, 64, (ctx) => drawEnemy(ctx, kind, ENEMY_COLORS[kind]));
   }
+
+  make(scene, 'heli', 210, 120, drawHeli);
+  make(scene, 'rotor', 240, 240, (ctx) => {
+    // Размытый диск вращения + светлые лопасти — видно и на тёмной лаве.
+    ctx.globalAlpha = 0.18;
+    ellipse(ctx, 120, 120, 118, 118, '#ffffff');
+    ctx.globalAlpha = 0.85;
+    for (const a of [0.3, 0.3 + Math.PI / 2]) {
+      ctx.save();
+      ctx.translate(120, 120);
+      ctx.rotate(a);
+      roundRect(ctx, -118, -6, 236, 12, 6, '#e8e8f0');
+      roundRect(ctx, -118, 1, 236, 5, 3, '#9a9aa8');
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ellipse(ctx, 120, 120, 9, 9, '#2a2a30');
+  });
+
+  // Холмик земли над кротом (тонируется под цвет биома).
+  make(scene, 'mound', 48, 28, (ctx) => {
+    lowPoly(ctx, 24, 16, 20, 9, 7, 4, '#ffffff', '#d8d8d8', '#a0a0a0');
+    for (const [x, y] of [[10, 22], [38, 21], [30, 25]]) ellipse(ctx, x, y, 3, 2, '#b8b8b8');
+  });
+}
+
+/** Спасательный вертолёт: красно-белый, как в горных спасслужбах. */
+function drawHeli(ctx: Ctx): void {
+  // Хвост.
+  roundRect(ctx, 115, 46, 80, 12, 6, '#b8322c');
+  roundRect(ctx, 115, 46, 80, 5, 3, '#e8453c');
+  poly(ctx, [[180, 50], [200, 22], [206, 26], [196, 54]], '#e8453c');
+  ellipse(ctx, 198, 56, 9, 9, 'rgba(60,60,70,0.5)');
+  // Полозья.
+  ctx.strokeStyle = '#3a3a44';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  for (const y of [104, 112]) {
+    ctx.beginPath();
+    ctx.moveTo(22, y);
+    ctx.lineTo(118, y);
+    ctx.stroke();
+  }
+  ctx.lineWidth = 3;
+  for (const x of [45, 95]) {
+    ctx.beginPath();
+    ctx.moveTo(x, 84);
+    ctx.lineTo(x, 110);
+    ctx.stroke();
+  }
+  // Корпус.
+  roundRect(ctx, 18, 26, 120, 66, 30, '#b8322c');
+  roundRect(ctx, 18, 26, 120, 52, 28, '#e8453c');
+  roundRect(ctx, 30, 60, 108, 9, 4, '#ffffff');
+  ellipse(ctx, 46, 48, 22, 18, '#3a5a7a');
+  ellipse(ctx, 42, 43, 16, 12, '#8fd0ff');
+  ellipse(ctx, 37, 39, 6, 4, '#ffffff');
+  roundRect(ctx, 76, 36, 30, 22, 4, '#3a5a7a');
+  roundRect(ctx, 78, 38, 26, 10, 3, '#8fd0ff');
+  // Втулка винта.
+  roundRect(ctx, 68, 14, 16, 14, 4, '#3a3a44');
+}
+
+// --- Шрифт цифр урона -------------------------------------------------------------
+
+/** Символы растрового шрифта для цифр урона (x — "отскок от панциря"). */
+export const DAMAGE_FONT_CHARS = '0123456789+-!x';
+const DAMAGE_CELL_W = 15;
+const DAMAGE_CELL_H = 28;
+
+/**
+ * Растровый шрифт для всплывающих цифр: рисуется один раз, а каждая цифра —
+ * это кусочек общей текстуры. Обычный Text перерисовывал бы canvas на каждом попадании.
+ */
+export function createDamageFont(scene: Phaser.Scene): void {
+  if (scene.cache.bitmapFont.exists('dmg')) return;
+  make(scene, 'dmgfont', DAMAGE_CELL_W * DAMAGE_FONT_CHARS.length, DAMAGE_CELL_H, (ctx) => {
+    ctx.font = 'bold 21px "Trebuchet MS", "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    [...DAMAGE_FONT_CHARS].forEach((ch, i) => {
+      const x = i * DAMAGE_CELL_W + DAMAGE_CELL_W / 2;
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = '#1a1020';
+      ctx.strokeText(ch, x, DAMAGE_CELL_H / 2 + 1);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(ch, x, DAMAGE_CELL_H / 2 + 1);
+    });
+  });
+  scene.cache.bitmapFont.add('dmg', Phaser.GameObjects.RetroFont.Parse(scene, {
+    image: 'dmgfont',
+    width: DAMAGE_CELL_W,
+    height: DAMAGE_CELL_H,
+    chars: DAMAGE_FONT_CHARS,
+    charsPerRow: DAMAGE_FONT_CHARS.length,
+    'offset.x': 0,
+    'offset.y': 0,
+    'spacing.x': 0,
+    'spacing.y': 0,
+    lineSpacing: 0,
+  }));
 }
 
 // --- Персонаж -------------------------------------------------------------------
@@ -330,7 +432,19 @@ const ENEMY_COLORS: Record<EnemyKind, CreatureColors> = {
   charger: { main: '#f0ece2', dark: '#a8a092', light: '#ffffff', extra: '#7a5a3a' },
   shooter: { main: '#3a3248', dark: '#1c1726', light: '#5f5478', extra: '#ff5fd0' },
   blob: { main: '#ff7a2f', dark: '#b8351f', light: '#ffcf5f', extra: '#2a1a1a' },
+  gnat: { main: '#6aa83a', dark: '#2f5a1f', light: '#b8f07a', extra: '#ff3f3f' },
+  turret: { main: '#8a8f9a', dark: '#565b66', light: '#c0c6d0', extra: '#5fe8ff' },
+  bomber: { main: '#2a2430', dark: '#c0392b', light: '#5a5068', extra: '#ffb03f' },
+  turtle: { main: '#4f9a5a', dark: '#2f6a3a', light: '#8fd08a', extra: '#c8b07a' },
+  healer: { main: '#e0453f', dark: '#9a2a2a', light: '#ff8a7a', extra: '#f0e0c0' },
+  sniper: { main: '#3f6a3a', dark: '#24401f', light: '#6a9a5a', extra: '#ffe03f' },
+  mole: { main: '#7a5a48', dark: '#4a3428', light: '#e8a8a0', extra: '#ff8aa0' },
 };
+
+/** Основной цвет врага — для частиц при смерти. */
+export function enemyTint(kind: EnemyKind | 'boss'): number {
+  return kind === 'boss' ? 0xffd23f : toColor(ENEMY_COLORS[kind].main);
+}
 
 function eyes(ctx: Ctx, x: number, y: number, gap: number, r: number, pupil = '#1a1020'): void {
   ellipse(ctx, x - gap, y, r, r * 1.1, '#ffffff');
@@ -461,6 +575,120 @@ function drawEnemy(ctx: Ctx, kind: EnemyKind, c: CreatureColors): void {
       eyes(ctx, 32, 36, 6, 3.5, c.extra);
       break;
     }
+    case 'gnat': {
+      // Рисуем крупнее, чтобы мелкую мошкару было видно.
+      ctx.translate(32, 32);
+      ctx.scale(1.5, 1.5);
+      ctx.translate(-32, -32);
+      ctx.globalAlpha = 0.6;
+      ellipse(ctx, 25, 27, 8, 4, '#ffffff');
+      ellipse(ctx, 39, 27, 8, 4, '#ffffff');
+      ctx.globalAlpha = 1;
+      ellipse(ctx, 32, 33, 6, 7, c.dark);
+      ellipse(ctx, 32, 31, 5, 5.5, c.main);
+      ellipse(ctx, 30, 29, 2, 1.5, c.light);
+      ellipse(ctx, 30, 33, 1.6, 1.6, c.extra);
+      ellipse(ctx, 34, 33, 1.6, 1.6, c.extra);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      break;
+    }
+    case 'turret': {
+      lowPoly(ctx, 32, 48, 16, 7, 7, 4, c.light, c.main, c.dark);
+      roundRect(ctx, 21, 18, 22, 30, 4, c.dark);
+      roundRect(ctx, 21, 18, 13, 30, 4, c.main);
+      roundRect(ctx, 18, 12, 28, 10, 3, c.light);
+      roundRect(ctx, 18, 16, 28, 6, 2, c.main);
+      ctx.shadowColor = c.extra;
+      ctx.shadowBlur = 6;
+      ellipse(ctx, 27, 30, 3, 3, c.extra);
+      ellipse(ctx, 37, 30, 3, 3, c.extra);
+      ctx.shadowBlur = 0;
+      roundRect(ctx, 26, 37, 12, 3, 1, mix(c.dark, '#000000', 0.4));
+      break;
+    }
+    case 'bomber': {
+      ellipse(ctx, 32, 40, 15, 12, mix(c.main, '#000000', 0.4));
+      ellipse(ctx, 32, 38, 14, 11, c.main);
+      ctx.strokeStyle = c.dark;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(32, 28);
+      ctx.lineTo(32, 49);
+      ctx.stroke();
+      ellipse(ctx, 27, 34, 4, 3, c.light);
+      ellipse(ctx, 32, 28, 7, 5, c.dark);
+      ctx.strokeStyle = '#d8c8a8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(32, 24);
+      ctx.quadraticCurveTo(36, 16, 40, 14);
+      ctx.stroke();
+      ctx.shadowColor = c.extra;
+      ctx.shadowBlur = 8;
+      ellipse(ctx, 40, 13, 3, 3, c.extra);
+      ctx.shadowBlur = 0;
+      ellipse(ctx, 29, 28, 1.6, 1.6, '#ffffff');
+      ellipse(ctx, 35, 28, 1.6, 1.6, '#ffffff');
+      break;
+    }
+    case 'turtle': {
+      for (const [x, y] of [[16, 44], [48, 44], [18, 32], [46, 32]]) ellipse(ctx, x, y, 5, 4, c.extra);
+      ellipse(ctx, 32, 22, 7, 7, c.extra);
+      eyes(ctx, 32, 21, 3.5, 2);
+      ellipse(ctx, 32, 41, 19, 13, c.dark);
+      ellipse(ctx, 32, 38, 18, 13, c.main);
+      for (const [x, y] of [[32, 36], [22, 39], [42, 39], [27, 45], [37, 45], [27, 30], [37, 30]]) {
+        lowPoly(ctx, x, y, 5, 4, 6, 0, c.light, c.main, c.dark);
+      }
+      break;
+    }
+    case 'healer': {
+      ctx.strokeStyle = '#6a4428';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(46, 50);
+      ctx.lineTo(46, 18);
+      ctx.stroke();
+      ctx.shadowColor = '#7fff9f';
+      ctx.shadowBlur = 10;
+      ellipse(ctx, 46, 16, 4.5, 4.5, '#9fffb0');
+      ctx.shadowBlur = 0;
+      roundRect(ctx, 24, 32, 16, 18, 6, c.extra);
+      roundRect(ctx, 24, 32, 8, 18, 5, mix(c.extra, '#ffffff', 0.3));
+      ellipse(ctx, 32, 30, 17, 11, c.dark);
+      ellipse(ctx, 32, 28, 16, 10, c.main);
+      for (const [x, y] of [[25, 26], [36, 23], [40, 30], [30, 33]]) ellipse(ctx, x, y, 2.5, 2, '#ffffff');
+      eyes(ctx, 32, 40, 3.5, 2);
+      break;
+    }
+    case 'sniper': {
+      ctx.strokeStyle = '#6a4428';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(46, 32, 13, -1.3, 1.3);
+      ctx.stroke();
+      ellipse(ctx, 32, 42, 12, 9, c.dark);
+      ellipse(ctx, 32, 40, 11, 8, c.main);
+      poly(ctx, [[20, 34], [32, 12], [44, 34]], c.dark);
+      poly(ctx, [[20, 34], [32, 12], [32, 34]], c.main);
+      ellipse(ctx, 32, 31, 7, 5, '#1a1020');
+      ellipse(ctx, 29, 31, 1.8, 1.4, c.extra);
+      ellipse(ctx, 35, 31, 1.8, 1.4, c.extra);
+      break;
+    }
+    case 'mole': {
+      for (const s of [-1, 1]) {
+        ellipse(ctx, 32 + s * 15, 40, 6, 5, c.light);
+        for (let i = -1; i <= 1; i++) ellipse(ctx, 32 + s * 17 + i * 3, 36, 1.4, 2.5, '#fff6e0');
+      }
+      ellipse(ctx, 32, 40, 15, 13, c.dark);
+      ellipse(ctx, 32, 37, 14, 12, c.main);
+      ellipse(ctx, 28, 32, 6, 4, mix(c.main, '#ffffff', 0.25));
+      ellipse(ctx, 32, 33, 4.5, 3.5, c.extra);
+      ellipse(ctx, 27, 29, 1.5, 1.2, '#1a1020');
+      ellipse(ctx, 37, 29, 1.5, 1.2, '#1a1020');
+      break;
+    }
   }
 }
 
@@ -541,7 +769,10 @@ export function createBiomeTextures(scene: Phaser.Scene, biome: Biome, biomeInde
       light: mix(b.boss.color, '#ffffff', 0.45),
       extra: kind === 'spitter' ? b.foliage : kind === 'blob' ? '#2a0a0a' : b.accent,
     });
-    // Корона — чтобы босса нельзя было спутать с обычным врагом.
+    // Корона — чтобы босса нельзя было спутать с обычным врагом. Сидит прямо на макушке.
+    const crownTop: Partial<Record<EnemyKind, number>> = { crab: 14, spitter: 8, charger: 8, shooter: 10, blob: 20 };
+    const top = crownTop[kind] ?? 8;
+    ctx.translate(0, top - 8);
     poly(ctx, [[24, 8], [26, 2], [29, 6], [32, 0], [35, 6], [38, 2], [40, 8]], '#ffd23f');
     poly(ctx, [[24, 8], [40, 8], [40, 10], [24, 10]], '#d8a21f');
   });

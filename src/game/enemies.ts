@@ -2,7 +2,20 @@ import Phaser from 'phaser';
 import { BOSS_PHASE2_AT } from './constants';
 import type { BossPattern, EnemyKind } from './season';
 
+/** Класс врага — в каждом уровне стараемся смешать разные классы. */
+export type EnemyClass = 'melee' | 'ranged' | 'flyer' | 'tank' | 'special';
+export const ENEMY_CLASSES: EnemyClass[] = ['melee', 'ranged', 'flyer', 'tank', 'special'];
+
 export interface EnemyDef {
+  cls: EnemyClass;
+  /**
+   * Общий враг встречается в любом биоме, начиная с уровня unlock.
+   * Остальные — биомные: живут только в своём биоме (см. Biome.enemies в season.ts).
+   */
+  common: boolean;
+  unlock: number;
+  /** Сколько штук появляется вместе (стая). */
+  pack: number;
   hp: number;
   speed: number;
   radius: number;
@@ -12,13 +25,41 @@ export interface EnemyDef {
 }
 
 export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
-  crab: { hp: 22, speed: 125, radius: 15, damage: 12, xp: 4, flying: false },
-  spitter: { hp: 30, speed: 0, radius: 16, damage: 12, xp: 5, flying: false },
-  bat: { hp: 14, speed: 150, radius: 13, damage: 10, xp: 4, flying: true },
-  charger: { hp: 48, speed: 75, radius: 19, damage: 22, xp: 7, flying: false },
-  shooter: { hp: 32, speed: 95, radius: 15, damage: 12, xp: 6, flying: false },
-  blob: { hp: 36, speed: 90, radius: 17, damage: 14, xp: 6, flying: false },
+  // Биомные.
+  crab: { cls: 'melee', common: false, unlock: 1, pack: 1, hp: 22, speed: 125, radius: 15, damage: 12, xp: 4, flying: false },
+  spitter: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 30, speed: 0, radius: 16, damage: 12, xp: 5, flying: false },
+  bat: { cls: 'flyer', common: false, unlock: 1, pack: 1, hp: 14, speed: 150, radius: 13, damage: 10, xp: 4, flying: true },
+  turtle: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 70, speed: 55, radius: 19, damage: 16, xp: 9, flying: false },
+  charger: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 48, speed: 75, radius: 19, damage: 22, xp: 7, flying: false },
+  mole: { cls: 'special', common: false, unlock: 1, pack: 1, hp: 34, speed: 140, radius: 15, damage: 16, xp: 7, flying: false },
+  shooter: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 32, speed: 95, radius: 15, damage: 12, xp: 6, flying: false },
+  bomber: { cls: 'special', common: false, unlock: 1, pack: 2, hp: 16, speed: 150, radius: 13, damage: 0, xp: 5, flying: false },
+  blob: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 36, speed: 90, radius: 17, damage: 14, xp: 6, flying: false },
+  turret: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 40, speed: 0, radius: 16, damage: 10, xp: 6, flying: false },
+  // Общие — открываются по ходу сезона и встречаются везде.
+  gnat: { cls: 'flyer', common: true, unlock: 2, pack: 4, hp: 7, speed: 175, radius: 9, damage: 6, xp: 1, flying: true },
+  healer: { cls: 'special', common: true, unlock: 9, pack: 1, hp: 26, speed: 85, radius: 14, damage: 8, xp: 8, flying: false },
+  sniper: { cls: 'ranged', common: true, unlock: 12, pack: 1, hp: 24, speed: 80, radius: 14, damage: 10, xp: 7, flying: false },
 };
+
+export const ALL_ENEMY_KINDS = Object.keys(ENEMY_DEFS) as EnemyKind[];
+
+/** Крот под землёй — в него нельзя попасть и он не кусает. */
+export function isHidden(e: Enemy): boolean {
+  return e.kind === 'mole' && e.state === 'under';
+}
+
+/** Черепаха в панцире — стрелы отскакивают. */
+export function isShielded(e: Enemy): boolean {
+  return e.kind === 'turtle' && e.state === 'shell';
+}
+
+/** Начальное состояние для врагов со своим циклом поведения. */
+export function initialState(kind: EnemyKind): string {
+  if (kind === 'mole') return 'under';
+  if (kind === 'turtle' || kind === 'sniper') return 'walk';
+  return 'idle';
+}
 
 export interface BossState {
   name: string;
@@ -82,6 +123,10 @@ export interface EnemyWorld {
   spawnMinion(kind: EnemyKind, x: number, y: number): void;
   spawnBlast(x: number, y: number, radius: number, delay: number): void;
   countMinions(): number;
+  /** Подрыв жука-бомбы: взрыв на месте и смерть. */
+  detonate(e: Enemy): void;
+  /** Лечение врагов вокруг шамана. */
+  healAround(e: Enemy, radius: number, fraction: number): void;
   shake(intensity: number, ms: number): void;
   roar(): void;
 }
@@ -110,7 +155,141 @@ export function thinkEnemy(e: Enemy, w: EnemyWorld, dt: number): void {
     case 'charger': return thinkCharger(e, w);
     case 'shooter': return thinkShooter(e, w);
     case 'blob': return thinkBlob(e, w);
+    case 'gnat': return thinkGnat(e, w);
+    case 'turret': return thinkTurret(e, w);
+    case 'bomber': return thinkBomber(e, w);
+    case 'turtle': return thinkTurtle(e, w);
+    case 'healer': return thinkHealer(e, w);
+    case 'sniper': return thinkSniper(e, w);
+    case 'mole': return thinkMole(e, w);
     case 'boss': return thinkBoss(e, w, dt);
+  }
+}
+
+/** Держаться на дистанции и обходить игрока по кругу. */
+function keepDistance(e: Enemy, w: EnemyWorld, near: number, far: number): void {
+  const a = angleTo(e, w);
+  const d = distTo(e, w);
+  if (d < near) moveAt(e, a + Math.PI, e.speed);
+  else if (d > far) moveAt(e, a, e.speed);
+  else moveAt(e, a + (e.alt ? Math.PI / 2 : -Math.PI / 2), e.speed * 0.6);
+  if (Math.random() < 0.01) e.alt = !e.alt;
+}
+
+/** Мошкара: быстрая стая, летит рывками. */
+function thinkGnat(e: Enemy, w: EnemyWorld): void {
+  moveAt(e, angleTo(e, w) + Math.sin(e.wobble * 7 + e.aim) * 1.1, e.speed);
+}
+
+/** Тотем: стоит и стреляет крестом, чередуя + и x. */
+function thinkTurret(e: Enemy, w: EnemyWorld): void {
+  e.vx = 0;
+  e.vy = 0;
+  if (e.timer < 0.4 && e.state !== 'windup') {
+    e.state = 'windup';
+    e.squash = -0.2;
+  }
+  if (e.timer > 0) return;
+  e.state = 'idle';
+  e.timer = 2.1 + Math.random() * 0.4;
+  if (distTo(e, w) > 520) return;
+  e.alt = !e.alt;
+  const base = e.alt ? Math.PI / 4 : 0;
+  for (let i = 0; i < 4; i++) w.fireShot(e.x, e.y - 12, base + (i * Math.PI) / 2, 190, false);
+  e.squash = 0.3;
+}
+
+/** Жук-бомба: бежит к игроку, шипит и взрывается. */
+function thinkBomber(e: Enemy, w: EnemyWorld): void {
+  if (e.state === 'windup') {
+    e.vx *= 0.8;
+    e.vy *= 0.8;
+    e.squash = Math.sin(e.wobble * 40) * 0.15;
+    if (e.timer <= 0) w.detonate(e);
+    return;
+  }
+  moveAt(e, angleTo(e, w) + Math.sin(e.wobble * 10) * 0.3, e.speed);
+  if (distTo(e, w) < 70) {
+    e.state = 'windup';
+    e.timer = 0.7;
+  }
+}
+
+/** Черепаха: идёт, потом прячется в неуязвимый панцирь. */
+function thinkTurtle(e: Enemy, w: EnemyWorld): void {
+  if (e.state === 'shell') {
+    e.vx = 0;
+    e.vy = 0;
+    if (e.timer <= 0) {
+      e.state = 'walk';
+      e.timer = 2.2 + Math.random();
+      e.squash = 0.3;
+    }
+    return;
+  }
+  moveAt(e, angleTo(e, w), e.speed);
+  if (e.timer <= 0) {
+    e.state = 'shell';
+    e.timer = 1.6;
+    e.squash = -0.3;
+  }
+}
+
+/** Шаман: держится сзади и лечит союзников. */
+function thinkHealer(e: Enemy, w: EnemyWorld): void {
+  keepDistance(e, w, 240, 340);
+  if (e.timer < 0.45 && e.state !== 'windup') {
+    e.state = 'windup';
+    e.squash = -0.2;
+  }
+  if (e.timer > 0) return;
+  e.state = 'idle';
+  e.timer = 3 + Math.random() * 0.5;
+  w.healAround(e, 180, 0.3);
+  e.squash = 0.3;
+}
+
+/** Снайпер: целится лазером, потом стреляет очень быстрой стрелой. */
+function thinkSniper(e: Enemy, w: EnemyWorld): void {
+  if (e.state === 'aim') {
+    e.vx = 0;
+    e.vy = 0;
+    // Прицел следит за игроком, а последние 0.35 с замирает — время увернуться.
+    if (e.timer > 0.35) e.aim = angleTo(e, w);
+    if (e.timer > 0) return;
+    w.fireShot(e.x, e.y - 10, e.aim, 560, false);
+    e.squash = 0.3;
+    e.state = 'walk';
+    e.timer = 2.2 + Math.random();
+    return;
+  }
+  keepDistance(e, w, 280, 420);
+  if (e.timer <= 0 && distTo(e, w) < 560) {
+    e.state = 'aim';
+    e.timer = 1.1;
+    e.aim = angleTo(e, w);
+  }
+}
+
+/** Крот: роет под землёй и выпрыгивает прямо под ногами. */
+function thinkMole(e: Enemy, w: EnemyWorld): void {
+  if (e.state === 'under') {
+    moveAt(e, angleTo(e, w) + Math.sin(e.wobble * 3) * 0.4, e.speed);
+    if (distTo(e, w) < 34 || e.timer <= 0) {
+      e.state = 'up';
+      e.timer = 1.6;
+      e.squash = 0.5;
+      e.vx = 0;
+      e.vy = 0;
+      w.shake(0.004, 100);
+    }
+    return;
+  }
+  e.vx = 0;
+  e.vy = 0;
+  if (e.timer <= 0) {
+    e.state = 'under';
+    e.timer = 3.5 + Math.random();
   }
 }
 
@@ -198,10 +377,7 @@ function thinkCharger(e: Enemy, w: EnemyWorld): void {
 function thinkShooter(e: Enemy, w: EnemyWorld): void {
   const a = angleTo(e, w);
   const d = distTo(e, w);
-  if (d < 220) moveAt(e, a + Math.PI, e.speed);
-  else if (d > 330) moveAt(e, a, e.speed);
-  else moveAt(e, a + (e.alt ? Math.PI / 2 : -Math.PI / 2), e.speed * 0.6);
-  if (Math.random() < 0.01) e.alt = !e.alt;
+  keepDistance(e, w, 220, 330);
 
   if (e.timer < 0.3 && e.state !== 'windup') {
     e.state = 'windup';

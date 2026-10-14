@@ -1,16 +1,34 @@
 import Phaser from 'phaser';
 import * as C from './constants';
 import { showChoice } from './choice';
-import { ENEMY_DEFS, thinkEnemy, type Enemy, type EnemyWorld } from './enemies';
+import {
+  ENEMY_DEFS,
+  initialState,
+  isHidden,
+  isShielded,
+  thinkEnemy,
+  type Enemy,
+  type EnemyWorld,
+} from './enemies';
 import { Hud } from './hud';
 import { BEAM_HALF_THICKNESS, generateLayout, type Arena, type Layout } from './level';
 import { getSeason, planLevel, type EnemyKind, type LevelPlan } from './season';
 import { sfx } from './sfx';
-import { biomeKey, createBiomeTextures, createCommonTextures, toColor } from './textures';
+import {
+  DAMAGE_FONT_CHARS,
+  biomeKey,
+  createBiomeTextures,
+  createCommonTextures,
+  createDamageFont,
+  enemyTint,
+  toColor,
+} from './textures';
 import {
   ABILITIES,
   UPGRADES,
   clearRun,
+  enemyHpMultiplier,
+  loadRun,
   newRun,
   rollChoices,
   saveRun,
@@ -18,7 +36,7 @@ import {
   type RunState,
 } from './upgrades';
 
-type Mode = 'play' | 'choice' | 'exit' | 'dead' | 'end';
+type Mode = 'play' | 'choice' | 'exit' | 'dead' | 'pause' | 'ending';
 type KeyName = 'up' | 'down' | 'left' | 'right' | 'up2' | 'down2' | 'left2' | 'right2' | 'fire' | 'roll' | 'crouch' | 'crouch2';
 type Img = Phaser.GameObjects.Image;
 
@@ -35,6 +53,8 @@ interface Arrow {
 interface Shot {
   x: number; y: number; vx: number; vy: number;
   high: boolean; damage: number; life: number; sprite: Img; shadow: Img;
+  /** Уже засчитан как уклонение (для статистики). */
+  dodged: boolean;
 }
 
 interface Orb {
@@ -53,11 +73,16 @@ interface Player {
   roll: number; rollDx: number; rollDy: number; rollHits: Set<Enemy>;
   aim: number; squash: number; walk: number; dustTimer: number;
   sprite: Img; shadow: Img; bow: Img;
+  // Активная броня и пассивки.
+  orbitAngle: number; orbitSprites: Img[];
+  // Анимация лука: угол на экране, отдача после выстрела, натяжение и стрела на тетиве.
+  bowAngle: number; bowKick: number; bowDraw: number; nocked: Img;
+  shieldReady: boolean; shieldTimer: number; shieldRing: Img;
+  lightningTimer: number; secondWindUsed: boolean;
 }
 
-const ENEMY_TINT: Record<EnemyKind | 'boss', number> = {
-  crab: 0xff6f4f, spitter: 0xb04fd0, bat: 0x5a3a7a, charger: 0xf0ece2, shooter: 0x3a3248, blob: 0xff7a2f, boss: 0xffd23f,
-};
+/** Как враг получил урон — от этого зависят эффекты. */
+type HitSource = 'arrow' | 'poison' | 'other';
 
 /** Высота, на которой летят стрелы над землёй. */
 const ARROW_HEIGHT = 14;
@@ -97,6 +122,7 @@ export class GameScene extends Phaser.Scene {
   private sparks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private chunks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private hurtOverlay!: Img;
+  private arrowTrail!: Phaser.GameObjects.Particles.ParticleEmitter;
 
   private hitstop = 0;
   private hurtFlash = 0;
@@ -108,6 +134,25 @@ export class GameScene extends Phaser.Scene {
   private exitStarted = false;
   private lastShotSfx = 0;
   private levelTime = 0;
+  /** Лазерные прицелы снайперов. */
+  private aimLines!: Phaser.GameObjects.Graphics;
+  /** Объекты меню паузы (null — пауза закрыта). */
+  private pauseParts: Phaser.GameObjects.GameObject[] | null = null;
+  /** Когда каждый враг в последний раз получил урон от орбиты / шипов (время уровня). */
+  private orbitHitAt = new Map<Enemy, number>();
+  private thornsHitAt = new Map<Enemy, number>();
+  /** Время уровня, когда началась битва с боссом. */
+  private bossStartTime = 0;
+  /** Счётчик FPS (клавиша F) — чтобы проверять производительность на своём ПК. */
+  private fpsText: Phaser.GameObjects.Text | null = null;
+  /** Пул всплывающих цифр урона. */
+  private popPool: Phaser.GameObjects.BitmapText[] = [];
+  private popActive = 0;
+  /** Неподвижный декор уровня — прячем всё, что вне экрана. */
+  private decor: { obj: Phaser.GameObjects.Components.Visible; y: number }[] = [];
+  private lastCullY = Number.NaN;
+  /** Вертолёт финальной катсцены. */
+  private heli: { body: Img; rotor: Img; shadow: Img; ladder: Phaser.GameObjects.Graphics; chop: number } | null = null;
 
   constructor() {
     super('GameScene');
@@ -125,6 +170,7 @@ export class GameScene extends Phaser.Scene {
     this.arena = this.layout.arena;
 
     createCommonTextures(this);
+    createDamageFont(this);
     createBiomeTextures(this, this.plan.biome, this.plan.biomeIndex);
     if (run.xpNeeded <= 0) run.xpNeeded = this.computeXpNeeded();
     saveRun(run);
@@ -166,13 +212,28 @@ export class GameScene extends Phaser.Scene {
     this.exitTimer = 0;
     this.exitStarted = false;
     this.levelTime = 0;
+    this.pauseParts = null;
+    this.orbitHitAt.clear();
+    this.thornsHitAt.clear();
+    this.bossStartTime = 0;
+    this.heli = null;
+    this.popPool = [];
+    this.fpsText = null;
+    this.popActive = 0;
+    this.decor = [];
+    this.lastCullY = Number.NaN;
+    this.endTarget = null;
+    this.climbing = false;
+    this.ladderLength = 0;
   }
 
-  /** Сколько опыта нужно до следующего усиления: ~1 усиление на LEVELS_PER_UPGRADE уровней. */
+  /**
+   * Сколько опыта нужно до следующего усиления: весь опыт врагов этого уровня
+   * × LEVELS_PER_UPGRADE (≈ одно усиление на 1.15 уровня, если зачищать всё).
+   */
   private computeXpNeeded(): number {
-    const kinds = this.plan.enemyKinds;
-    const avgXp = kinds.reduce((sum, k) => sum + ENEMY_DEFS[k].xp, 0) / kinds.length;
-    const perLevel = Math.max(30, (this.plan.isBoss ? 10 : this.plan.enemyCount) * avgXp);
+    const spawnXp = this.layout.spawns.reduce((sum, s) => sum + ENEMY_DEFS[s.kind].xp, 0);
+    const perLevel = Math.max(25, spawnXp + (this.plan.isBoss ? 60 : 0));
     return Math.round(perLevel * C.LEVELS_PER_UPGRADE);
   }
 
@@ -187,11 +248,11 @@ export class GameScene extends Phaser.Scene {
     this.add.tileSprite(0, 0, C.GAME_WIDTH, L, biomeKey(b, 'ground')).setOrigin(0).setDepth(C.DEPTH.ground);
 
     for (const d of this.layout.decals) {
-      this.add.image(d.x, d.y, biomeKey(b, `decal${d.variant}`)).setDepth(C.DEPTH.decal).setAlpha(0.85);
+      this.keepDecor(this.add.image(d.x, d.y, biomeKey(b, `decal${d.variant}`)).setDepth(C.DEPTH.decal).setAlpha(0.85), d.y);
     }
 
     for (const p of this.layout.pools) {
-      const img = this.add.image(p.x, p.y, biomeKey(b, 'pool')).setDepth(C.DEPTH.pool);
+      const img = this.keepDecor(this.add.image(p.x, p.y, biomeKey(b, 'pool')).setDepth(C.DEPTH.pool), p.y);
       img.setScale((p.rx * 2) / 160, (p.ry * 2) / 88);
       if (b.poolHurts) {
         this.tweens.add({ targets: img, alpha: 0.75, duration: 700 + Math.random() * 400, yoyo: true, repeat: -1 });
@@ -203,9 +264,9 @@ export class GameScene extends Phaser.Scene {
 
     for (const o of this.layout.obstacles) {
       const key = o.kind === 'tree' ? biomeKey(b, 'tree') : biomeKey(b, `rock${o.variant}`);
-      const img = this.add.image(o.x, o.y, key).setScale(o.scale).setDepth(C.DEPTH.world + o.y);
+      const img = this.keepDecor(this.add.image(o.x, o.y, key).setScale(o.scale).setDepth(C.DEPTH.world + o.y), o.y);
       img.setOrigin(0.5, o.kind === 'tree' ? 0.94 : 0.6);
-      this.add.image(o.x + 4, o.y + 3, 'shadow').setScale((o.r * 2.6) / 64).setDepth(C.DEPTH.shadow);
+      this.keepDecor(this.add.image(o.x + 4, o.y + 3, 'shadow').setScale((o.r * 2.6) / 64).setDepth(C.DEPTH.shadow), o.y);
       if (o.kind === 'tree') {
         img.setAngle(-1.2);
         this.tweens.add({ targets: img, angle: 1.2, duration: 1600 + Math.random() * 900, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
@@ -234,6 +295,46 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0).setDepth(C.DEPTH.overlay + 2).setAlpha(0);
   }
 
+  private toggleFps(): void {
+    if (this.fpsText) {
+      this.fpsText.destroy();
+      this.fpsText = null;
+      return;
+    }
+    this.fpsText = this.add.text(C.GAME_WIDTH - 16, 60, '', {
+      fontFamily: 'monospace', fontSize: '14px', color: '#9cffd6', backgroundColor: '#1a1020', padding: { x: 6, y: 3 },
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(C.DEPTH.modal + 5);
+  }
+
+  private updateFps(): void {
+    if (!this.fpsText || this.game.loop.frame % 15 !== 0) return;
+    const drawn = this.children.list.filter((o) => (o as Partial<Phaser.GameObjects.Components.Visible>).visible !== false).length;
+    const renderer = this.game.renderer.type === Phaser.WEBGL ? 'WebGL' : 'Canvas';
+    this.fpsText.setText(`${Math.round(this.game.loop.actualFps)} FPS · ${renderer} · ${drawn}/${this.children.list.length} obj`);
+  }
+
+  /** Запоминает неподвижный объект, чтобы прятать его, когда он за экраном. */
+  private keepDecor<T extends Phaser.GameObjects.Components.Visible>(obj: T, y: number): T {
+    this.decor.push({ obj, y });
+    return obj;
+  }
+
+  private isOnScreen(y: number): boolean {
+    const top = this.cameras.main.scrollY - C.CULL_MARGIN;
+    return y > top && y < top + C.GAME_HEIGHT + C.CULL_MARGIN * 2;
+  }
+
+  /**
+   * Отсечение: рисуем только то, что рядом с экраном. На длинных уровнях
+   * так отрисовывается ~200 объектов вместо ~600. Пересчёт — только когда камера сдвинулась.
+   */
+  private cullDecor(): void {
+    const scrollY = this.cameras.main.scrollY;
+    if (Math.abs(scrollY - this.lastCullY) < 16) return;
+    this.lastCullY = scrollY;
+    for (const d of this.decor) d.obj.setVisible(this.isOnScreen(d.y));
+  }
+
   private buildCliffs(): void {
     const b = this.plan.biome;
     const L = this.plan.length;
@@ -245,24 +346,24 @@ export class GameScene extends Phaser.Scene {
       for (const side of [0, 1]) {
         const x = side === 0 ? rng.between(-20, 20) : C.GAME_WIDTH - rng.between(-20, 20);
         const yy = y + rng.between(-14, 14);
-        this.add.image(x, yy, biomeKey(b, 'cliff'))
+        this.keepDecor(this.add.image(x, yy, biomeKey(b, 'cliff'))
           .setOrigin(0.5, 0.7)
           .setScale(rng.realInRange(0.8, 1.1))
           .setFlipX(side === 1)
-          .setDepth(C.DEPTH.world + yy + 40);
+          .setDepth(C.DEPTH.world + yy + 40), yy);
       }
     }
   }
 
   private buildBeam(beam: Beam): void {
     const width = beam.x2 - beam.x1;
-    this.add.rectangle(beam.x1, beam.y + 4, width, 14, 0x000000, 0.18).setOrigin(0, 0.5).setDepth(C.DEPTH.shadow);
+    this.keepDecor(this.add.rectangle(beam.x1, beam.y + 4, width, 14, 0x000000, 0.18).setOrigin(0, 0.5).setDepth(C.DEPTH.shadow), beam.y);
     for (const x of [beam.x1 + 8, beam.x2 - 8]) {
-      this.add.image(x, beam.y + 12, 'post').setOrigin(0.5, 0.9).setDepth(C.DEPTH.world + beam.y + 10);
+      this.keepDecor(this.add.image(x, beam.y + 12, 'post').setOrigin(0.5, 0.9).setDepth(C.DEPTH.world + beam.y + 10), beam.y);
     }
-    this.add.image(beam.x1, beam.y - 26, 'log').setOrigin(0, 0.5)
+    this.keepDecor(this.add.image(beam.x1, beam.y - 26, 'log').setOrigin(0, 0.5)
       .setDisplaySize(width, 30)
-      .setDepth(C.DEPTH.world + beam.y + 30);
+      .setDepth(C.DEPTH.world + beam.y + 30), beam.y);
     this.beams.push(beam);
   }
 
@@ -271,6 +372,27 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0, 0.85)
       .setDepth(C.DEPTH.world + arena.gateY);
     this.boss = this.createBoss(arena);
+    if (this.isFinalLevel()) this.buildVolcanoCrater(arena);
+  }
+
+  private isFinalLevel(): boolean {
+    return this.plan.level === C.LEVELS_PER_SEASON;
+  }
+
+  /** Финал: кратер вулкана — лавовые озёра по краям арены и дым с искрами. */
+  private buildVolcanoCrater(arena: Arena): void {
+    const b = this.plan.biome;
+    for (const [x, y] of [[175, 330], [C.GAME_WIDTH - 175, 330]]) {
+      const pool = { x, y, rx: 70, ry: 42 };
+      const img = this.add.image(x, y, biomeKey(b, 'pool')).setDepth(C.DEPTH.pool).setScale(140 / 160, 84 / 88);
+      if (b.poolHurts) this.tweens.add({ targets: img, alpha: 0.75, duration: 600, yoyo: true, repeat: -1 });
+      this.pools.push(pool);
+    }
+    this.add.particles(0, 0, 'soft', {
+      x: { min: C.SIDE_WALL, max: C.GAME_WIDTH - C.SIDE_WALL }, y: arena.bottom,
+      lifespan: 3500, speedY: { min: -120, max: -50 }, speedX: { min: -20, max: 20 },
+      scale: { start: 0.4, end: 0 }, tint: [0xffb03f, 0xff5a1f], blendMode: 'ADD', frequency: 50,
+    }).setDepth(C.DEPTH.overlay - 6);
   }
 
   // ===========================================================================
@@ -290,6 +412,12 @@ export class GameScene extends Phaser.Scene {
       shadow: this.add.image(x, y, 'shadow').setScale(0.55).setDepth(C.DEPTH.shadow),
       sprite: this.add.image(x, y, 'player').setOrigin(0.5, 0.9),
       bow: this.add.image(x, y, 'bow').setOrigin(0.25, 0.5),
+      orbitAngle: 0, orbitSprites: [],
+      bowAngle: -Math.PI / 2, bowKick: 0, bowDraw: 0,
+      nocked: this.add.image(x, y, 'arrow').setOrigin(0.85, 0.5).setVisible(false),
+      shieldReady: this.run.shield > 0, shieldTimer: 0,
+      shieldRing: this.add.image(x, y, 'ring').setTint(0x7fd8ff).setScale(0.5).setAlpha(0),
+      lightningTimer: C.LIGHTNING_INTERVAL, secondWindUsed: false,
     };
   }
 
@@ -297,7 +425,7 @@ export class GameScene extends Phaser.Scene {
     const def = ENEMY_DEFS[kind];
     const d = this.plan.difficulty;
     const baseScale = small ? 0.6 : 0.9;
-    const hp = Math.round(def.hp * d * (small ? 0.4 : 1));
+    const hp = Math.round(def.hp * enemyHpMultiplier(this.run) * (small ? 0.4 : 1));
     const e: Enemy = {
       kind, x, y, vx: 0, vy: 0, kx: 0, ky: 0,
       radius: def.radius * (small ? 0.65 : 1),
@@ -309,7 +437,7 @@ export class GameScene extends Phaser.Scene {
       sprite: this.add.image(x, y, kind).setOrigin(0.5, 0.72).setScale(baseScale),
       shadow: this.add.image(x, y, 'shadow').setDepth(C.DEPTH.shadow),
       baseScale, awake: false, dead: false,
-      state: 'idle', timer: 0.4 + Math.random() * 1.2, aim: 0, alt: Math.random() < 0.5, bumped: false,
+      state: initialState(kind), timer: 0.4 + Math.random() * 1.2, aim: Math.random() * 10, alt: Math.random() < 0.5, bumped: false,
       hop: 0, flash: 0, squash: 0, wobble: Math.random() * 10, slow: 0, poison: 0, poisonTick: 0,
       boss: null,
     };
@@ -320,13 +448,15 @@ export class GameScene extends Phaser.Scene {
 
   private createBoss(arena: Arena): Enemy {
     const b = this.plan.biome;
-    const bossNumber = Math.floor(this.plan.level / C.BOSS_EVERY) - 1;
-    const hp = Math.round(C.BOSS_BASE_HP * (1 + bossNumber * C.BOSS_HP_GROWTH) * (1 + this.plan.season * 0.8));
+    // Босс подчиняется тому же правилу роста HP, что и обычные враги; финальный — крупнее.
+    const final = this.isFinalLevel();
+    const hp = Math.round(C.BOSS_BASE_HP * enemyHpMultiplier(this.run) * (final ? C.FINAL_BOSS_HP_MUL : 1));
     const e = this.createEnemy(b.enemies[0], arena.bossX, arena.bossY);
     e.kind = 'boss';
+    e.state = 'idle';
     e.sprite.setTexture(biomeKey(b, 'boss')).setOrigin(0.5, 0.75);
-    e.baseScale = 0.8;
-    e.radius = 56;
+    e.baseScale = final ? 1 : 0.8;
+    e.radius = final ? 68 : 56;
     e.hp = hp;
     e.maxHp = hp;
     e.speed = 95;
@@ -358,6 +488,10 @@ export class GameScene extends Phaser.Scene {
       lifespan: 650, speed: { min: 110, max: 330 }, scale: { start: 1, end: 0.2 },
       gravityY: 520, emitting: false,
     }).setDepth(C.DEPTH.overlay - 11);
+    this.aimLines = this.add.graphics().setDepth(C.DEPTH.overlay - 12);
+    this.arrowTrail = this.add.particles(0, 0, 'soft', {
+      lifespan: 160, speed: 0, scale: { start: 0.28, end: 0 }, alpha: { start: 0.55, end: 0 }, emitting: false,
+    }).setDepth(C.DEPTH.overlay - 13);
     this.createAmbient();
   }
 
@@ -391,7 +525,25 @@ export class GameScene extends Phaser.Scene {
       countMinions: () => this.enemies.filter((e) => !e.dead && e.awake && e.kind !== 'boss').length,
       shake: (intensity, ms) => this.cameras.main.shake(ms, intensity),
       roar: () => sfx.bossRoar(),
+      detonate: (e) => {
+        this.spawnBlast(e.x, e.y, 72, 0.01);
+        this.killEnemy(e);
+      },
+      healAround: (healer, radius, fraction) => this.healAround(healer, radius, fraction),
     };
+  }
+
+  private healAround(healer: Enemy, radius: number, fraction: number): void {
+    sfx.heal();
+    const ring = this.add.image(healer.x, healer.y, 'ring').setTint(0x7fff9f).setScale(0.2).setDepth(C.DEPTH.pool + 1);
+    this.tweens.add({ targets: ring, scale: (radius * 2) / 128, alpha: 0, duration: 450, onComplete: () => ring.destroy() });
+    for (const e of this.enemies) {
+      if (e.dead || e === healer || e.hp >= e.maxHp) continue;
+      if (Math.hypot(e.x - healer.x, e.y - healer.y) > radius) continue;
+      const amount = Math.round(e.maxHp * fraction);
+      e.hp = Math.min(e.maxHp, e.hp + amount);
+      this.popText(e.x, e.y - 44, `+${amount}`, '#7fff9f', 16);
+    }
   }
 
   private setupInput(): void {
@@ -405,6 +557,16 @@ export class GameScene extends Phaser.Scene {
     }) as Record<KeyName, Phaser.Input.Keyboard.Key>;
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', () => sfx.unlock());
+
+    kb.on('keydown-ESC', () => this.togglePause());
+    kb.on('keydown-F', () => this.toggleFps());
+    kb.on('keydown-P', () => this.togglePause());
+    // Окно потеряло фокус — ставим паузу, чтобы не умереть, пока игрок отошёл.
+    const onBlur = () => {
+      if (this.mode === 'play') this.openPause();
+    };
+    this.game.events.on(Phaser.Core.Events.BLUR, onBlur);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.game.events.off(Phaser.Core.Events.BLUR, onBlur));
   }
 
   // ===========================================================================
@@ -419,8 +581,12 @@ export class GameScene extends Phaser.Scene {
       else this.step(dt);
     } else if (this.mode === 'exit') {
       this.stepExit(dt);
+    } else if (this.mode === 'ending') {
+      this.stepEnding(dt);
     }
 
+    this.cullDecor();
+    this.updateFps();
     this.updateHurtOverlay(dt);
     this.hud.update({
       run: this.run,
@@ -434,10 +600,12 @@ export class GameScene extends Phaser.Scene {
 
   private step(dt: number): void {
     this.levelTime += dt;
+    this.run.stats.time += dt;
     this.updatePlayer(dt);
     this.updateCamera(dt);
     this.updateShooting(dt);
     this.updateArrows(dt);
+    this.updateArmor(dt);
     this.updateEnemies(dt);
     this.updateShots(dt);
     this.updateOrbs(dt);
@@ -530,6 +698,7 @@ export class GameScene extends Phaser.Scene {
     p.stamina -= cost;
     p.staminaDelay = C.STAMINA_REGEN_DELAY;
     p.burstLeft = 0;
+    this.run.stats.rolls += 1;
     sfx.roll();
     this.dust.explode(8, p.x, p.y);
 
@@ -590,8 +759,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     p.x = Phaser.Math.Clamp(p.x, this.layout.minX - 10 + r, this.layout.maxX + 10 - r);
-    const cam = this.cameras.main;
-    const bottom = cam.scrollY + C.GAME_HEIGHT - r - 6;
+    // Внутри уровня можно ходить и назад; на арене босса — только внутри арены.
+    const floor = this.arenaLocked && this.arena ? this.arena.bottom : this.plan.length;
+    const bottom = floor - r - 6;
     if (p.y > bottom) {
       p.y = bottom;
       p.vy = Math.min(p.vy, 0);
@@ -666,12 +836,56 @@ export class GameScene extends Phaser.Scene {
     p.sprite.setAlpha(blink ? 0.45 : 1);
     p.shadow.setPosition(p.x, p.y).setScale(0.55 + p.crouchK * 0.1, 0.55);
 
-    const bowDist = 12;
+    this.syncBow(dt);
+  }
+
+  /**
+   * Лук: быстро доворачивается к цели, натягивается к следующему выстрелу
+   * и пружинит от отдачи — чтобы стрельба ощущалась резкой.
+   */
+  private syncBow(dt: number): void {
+    const p = this.player;
+    const turn = Phaser.Math.Angle.Wrap(p.aim - p.bowAngle);
+    p.bowAngle += turn * Math.min(1, dt * C.BOW_TURN_SPEED);
+    p.bowKick = Math.max(0, p.bowKick - dt * 7);
+
+    const holding = (this.keys.fire.isDown || this.input.activePointer.leftButtonDown()) && this.mode === 'play';
+    const interval = C.FIRE_INTERVAL / this.run.fireRateMul;
+    const targetDraw = holding ? Phaser.Math.Clamp(1 - p.fireCooldown / interval, 0, 1) : 0;
+    p.bowDraw += (targetDraw - p.bowDraw) * Math.min(1, dt * 18);
+
+    // Отдача: лук отскакивает назад и "вздрагивает" плечами (затухающая волна).
+    const wobble = Math.sin(p.bowKick * 18) * p.bowKick;
+    const dist = C.BOW_DISTANCE - p.bowKick * C.BOW_KICK_BACK - p.bowDraw * 3;
+    const cos = Math.cos(p.bowAngle);
+    const sin = Math.sin(p.bowAngle);
+    const bx = p.x + cos * dist;
+    const by = p.y - C.BOW_CHEST_HEIGHT + p.crouchK * 8 + sin * dist;
+    const visible = p.roll <= 0;
     p.bow
-      .setVisible(p.roll <= 0)
-      .setPosition(p.x + Math.cos(p.aim) * bowDist, p.y - 20 + p.crouchK * 8 + Math.sin(p.aim) * bowDist)
-      .setRotation(p.aim)
+      .setVisible(visible)
+      .setPosition(bx, by)
+      .setRotation(p.bowAngle)
+      .setScale(1 + p.bowDraw * 0.12 - p.bowKick * 0.15, 1 - p.bowDraw * 0.18 + wobble * 0.35)
       .setDepth(C.DEPTH.world + p.y + 1);
+
+    // Стрела на тетиве: появляется при натяжении и отъезжает назад вместе с ним.
+    const showNocked = visible && p.bowDraw > 0.25 && p.bowKick < 0.4;
+    p.nocked
+      .setVisible(showNocked)
+      .setPosition(bx + cos * (14 - p.bowDraw * 8), by + sin * (14 - p.bowDraw * 8))
+      .setRotation(p.bowAngle)
+      .setAlpha(Math.min(1, (p.bowDraw - 0.25) * 3))
+      .setDepth(C.DEPTH.world + p.y + 2);
+  }
+
+  /** Куда смотрит лук между выстрелами: на ближайшего врага, иначе — по ходу движения. */
+  private updateIdleAim(): void {
+    const p = this.player;
+    if (this.input.activePointer.leftButtonDown()) return;
+    const target = this.nearestEnemy(p.x, p.y, C.AUTO_AIM_RANGE, []);
+    if (target) p.aim = Math.atan2(target.y - p.y, target.x - p.x);
+    else if (Math.hypot(p.vx, p.vy) > 60) p.aim = Math.atan2(p.vy, p.vx);
   }
 
   private updateCamera(dt: number): void {
@@ -681,15 +895,16 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const target = Phaser.Math.Clamp(this.player.y - C.GAME_HEIGHT * C.CAMERA_ANCHOR, 0, this.plan.length - C.GAME_HEIGHT);
-    // Камера едет только вверх — назад пути нет.
-    if (target < cam.scrollY) cam.scrollY += (target - cam.scrollY) * Math.min(1, dt * 10);
+    cam.scrollY += (target - cam.scrollY) * Math.min(1, dt * 8);
   }
 
   private hurtPlayer(amount: number, fromX?: number, fromY?: number): void {
     const p = this.player;
     if (p.roll > 0 || p.invuln > 0 || this.mode !== 'play') return;
+    if (this.tryShieldBlock()) return;
     const dmg = Math.round(amount * (this.has('shelter') && p.crouch ? C.SHELTER_DAMAGE_MUL : 1));
     this.run.hp -= dmg;
+    this.run.stats.damageTaken += dmg;
     p.invuln = C.HURT_INVULNERABILITY;
     if (fromX !== undefined && fromY !== undefined) {
       const a = Math.atan2(p.y - fromY, p.x - fromX);
@@ -702,7 +917,22 @@ export class GameScene extends Phaser.Scene {
     this.hurtFlash = 0.85;
     this.hitstop = Math.max(this.hitstop, 0.06);
     this.popText(p.x, p.y - 44, `-${dmg}`, '#ff4f5f', 22);
-    if (this.run.hp <= 0) this.die();
+    if (this.run.hp <= 0 && !this.trySecondWind()) this.die();
+  }
+
+  /** "Второе дыхание": раз за уровень вместо смерти восстанавливает часть здоровья. */
+  private trySecondWind(): boolean {
+    const p = this.player;
+    if (!this.has('secondWind') || p.secondWindUsed) return false;
+    p.secondWindUsed = true;
+    this.run.hp = Math.round(this.run.maxHp * C.SECOND_WIND_HEAL);
+    p.invuln = 2;
+    sfx.levelUp();
+    this.cameras.main.flash(250, 255, 220, 160);
+    this.sparks.particleTint = 0xffd0a0;
+    this.sparks.explode(24, p.x, p.y - 20);
+    this.popText(p.x, p.y - 60, '❦', '#ffd0a0', 30);
+    return true;
   }
 
   private updateHurtOverlay(dt: number): void {
@@ -728,6 +958,8 @@ export class GameScene extends Phaser.Scene {
         this.fireSet(p.burstAngle);
       }
     }
+
+    if (p.burstLeft <= 0) this.updateIdleAim();
 
     const pointer = this.input.activePointer;
     const wantFire = this.keys.fire.isDown || pointer.leftButtonDown();
@@ -762,7 +994,7 @@ export class GameScene extends Phaser.Scene {
     let best: Enemy | null = null;
     let bestD = range;
     for (const e of this.enemies) {
-      if (e.dead || !e.awake || exclude.includes(e)) continue;
+      if (e.dead || !e.awake || isHidden(e) || exclude.includes(e)) continue;
       const d = Math.hypot(e.x - x, e.y - y);
       if (d < bestD) {
         bestD = d;
@@ -775,8 +1007,25 @@ export class GameScene extends Phaser.Scene {
   private fireSet(angle: number): void {
     const p = this.player;
     const angles = this.run.spread ? [angle - C.SPREAD_ANGLE, angle, angle + C.SPREAD_ANGLE] : [angle];
-    for (const a of angles) this.spawnArrow(p.x, p.y, a, 1);
+    // Стрелы вылетают с кончика лука, а не из центра героя.
+    const tipX = p.x + Math.cos(angle) * C.BOW_DISTANCE;
+    const tipY = p.y + Math.sin(angle) * C.BOW_DISTANCE;
+    for (const a of angles) this.spawnArrow(tipX, tipY, a, 1);
+    p.aim = angle;
+    p.bowAngle = angle;
+    p.bowKick = 1;
+    p.bowDraw = 0;
+    this.muzzleFlash(tipX, p.y - C.BOW_CHEST_HEIGHT + Math.sin(angle) * C.BOW_DISTANCE, angle);
     sfx.shoot();
+  }
+
+  /** Короткая вспышка и искры на кончике лука в момент выстрела. */
+  private muzzleFlash(x: number, y: number, angle: number): void {
+    const flash = this.add.image(x, y, 'soft').setTint(0xfff3c4).setBlendMode(Phaser.BlendModes.ADD)
+      .setScale(0.5, 0.3).setRotation(angle).setDepth(C.DEPTH.overlay - 10);
+    this.tweens.add({ targets: flash, scaleX: 1.6, scaleY: 0.5, alpha: 0, duration: 110, ease: 'Quad.Out', onComplete: () => flash.destroy() });
+    this.sparks.particleTint = 0xfff0c0;
+    this.sparks.emitParticleAt(x + Math.cos(angle) * 6, y + Math.sin(angle) * 6, 2);
   }
 
   private fireRing(damageMul: number): void {
@@ -791,6 +1040,7 @@ export class GameScene extends Phaser.Scene {
   private spawnArrow(x: number, y: number, angle: number, damageMul: number): void {
     const sprite = this.add.image(x, y - ARROW_HEIGHT, 'arrow').setOrigin(0.85, 0.5).setRotation(angle);
     const shadow = this.add.image(x, y, 'shadow').setScale(0.3, 0.2).setDepth(C.DEPTH.shadow).setAlpha(0.6);
+    this.run.stats.arrows += 1;
     this.arrows.push({
       x, y,
       vx: Math.cos(angle) * C.ARROW_SPEED,
@@ -829,11 +1079,17 @@ export class GameScene extends Phaser.Scene {
       }
 
       for (const e of this.enemies) {
-        if (e.dead || a.hits.includes(e) || (e.kind === 'boss' && !e.awake)) continue;
+        if (e.dead || a.hits.includes(e) || isHidden(e) || (e.kind === 'boss' && !e.awake)) continue;
         if (Math.hypot(e.x - a.x, e.y - a.y) > e.radius + C.ARROW_RADIUS) continue;
+        if (isShielded(e)) {
+          this.deflectArrow(a, e);
+          break;
+        }
         a.hits.push(e);
         const speed = Math.hypot(a.vx, a.vy);
-        this.hitEnemy(e, a.damage, a.vx / speed, a.vy / speed);
+        this.run.stats.hits += 1;
+        if (this.has('frostArrows')) e.slow = Math.max(e.slow, C.FROST_ARROW_SLOW_TIME);
+        this.hitEnemy(e, a.damage, a.vx / speed, a.vy / speed, 'arrow');
         if (a.pierce > 0) {
           a.pierce -= 1;
         } else if (a.bounces > 0) {
@@ -845,7 +1101,10 @@ export class GameScene extends Phaser.Scene {
         break;
       }
 
-      a.sprite.setPosition(a.x, a.y - ARROW_HEIGHT).setDepth(C.DEPTH.world + a.y);
+      // Первые доли секунды стрела вытянута — так читается скорость; плюс короткий след.
+      const fresh = Math.max(0, a.life - (C.ARROW_LIFETIME - C.ARROW_STRETCH_TIME)) / C.ARROW_STRETCH_TIME;
+      a.sprite.setPosition(a.x, a.y - ARROW_HEIGHT).setScale(1 + fresh * 0.9, 1 - fresh * 0.2).setDepth(C.DEPTH.world + a.y);
+      if (this.game.loop.frame % 2 === 0) this.arrowTrail.emitParticleAt(a.x, a.y - ARROW_HEIGHT, 1);
       a.shadow.setPosition(a.x, a.y);
     }
     this.arrows = this.arrows.filter((a) => {
@@ -854,6 +1113,16 @@ export class GameScene extends Phaser.Scene {
       a.shadow.destroy();
       return false;
     });
+  }
+
+  /** Стрела отскакивает от панциря и падает. */
+  private deflectArrow(a: Arrow, e: Enemy): void {
+    a.life = 0;
+    e.squash = 0.12;
+    sfx.block();
+    this.sparks.particleTint = 0xd8e2ea;
+    this.sparks.explode(5, a.x, a.y - ARROW_HEIGHT);
+    if (Math.random() < 0.3) this.popText(e.x, e.y - 40, 'x', '#d8e2ea', 16);
   }
 
   private redirectArrow(a: Arrow): void {
@@ -872,6 +1141,123 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ===========================================================================
+  // Активная броня и пассивки
+  // ===========================================================================
+
+  private updateArmor(dt: number): void {
+    const run = this.run;
+    if (run.regen > 0 && run.hp < run.maxHp) run.hp = Math.min(run.maxHp, run.hp + run.regen * dt);
+    this.updateOrbit(dt);
+    this.updateShield(dt);
+    if (this.has('lightning')) this.updateLightning(dt);
+  }
+
+  /** Стрелы-спутники: кружат вокруг героя, ранят врагов и сбивают вражеские снаряды. */
+  private updateOrbit(dt: number): void {
+    const p = this.player;
+    const n = this.run.orbit;
+    while (p.orbitSprites.length < n) p.orbitSprites.push(this.add.image(p.x, p.y, 'arrow').setOrigin(0.5));
+    if (n === 0) return;
+
+    p.orbitAngle += C.ORBIT_SPEED * dt;
+    p.orbitSprites.forEach((sprite, i) => {
+      const a = p.orbitAngle + (i / n) * Math.PI * 2;
+      const x = p.x + Math.cos(a) * C.ORBIT_RADIUS;
+      const y = p.y + Math.sin(a) * C.ORBIT_RADIUS * 0.75;
+      sprite.setPosition(x, y - ARROW_HEIGHT).setRotation(a + Math.PI / 2).setDepth(C.DEPTH.world + y);
+
+      for (const e of this.enemies) {
+        if (e.dead || !e.awake || isHidden(e) || isShielded(e)) continue;
+        if (Math.hypot(e.x - x, e.y - y) > e.radius + 8) continue;
+        if (this.levelTime - (this.orbitHitAt.get(e) ?? -99) < C.ORBIT_HIT_COOLDOWN) continue;
+        this.orbitHitAt.set(e, this.levelTime);
+        this.hitEnemy(e, C.ORBIT_DAMAGE * this.run.damageMul, Math.cos(a), Math.sin(a));
+      }
+      for (const s of this.shots) {
+        if (s.high || s.life <= 0 || Math.hypot(s.x - x, s.y - y) > 16) continue;
+        s.life = 0;
+        this.run.stats.dodges += 1;
+        this.sparks.particleTint = 0xffe07f;
+        this.sparks.explode(4, s.x, s.y - 8);
+      }
+    });
+  }
+
+  private shieldCooldown(): number {
+    return C.SHIELD_COOLDOWNS[Math.min(this.run.shield, C.SHIELD_COOLDOWNS.length) - 1];
+  }
+
+  private updateShield(dt: number): void {
+    const p = this.player;
+    if (this.run.shield <= 0) return;
+    if (!p.shieldReady) {
+      p.shieldTimer -= dt;
+      if (p.shieldTimer <= 0) {
+        p.shieldReady = true;
+        sfx.select();
+      }
+    }
+    const pulse = 0.35 + Math.sin(this.time.now / 200) * 0.1;
+    p.shieldRing
+      .setPosition(p.x, p.y - 18)
+      .setAlpha(p.shieldReady ? pulse : 0)
+      .setScale(0.42, 0.42)
+      .setDepth(C.DEPTH.world + p.y + 2);
+  }
+
+  /** Щит поглощает удар. Возвращает true, если удар заблокирован. */
+  private tryShieldBlock(): boolean {
+    const p = this.player;
+    if (!p.shieldReady) return false;
+    p.shieldReady = false;
+    p.shieldTimer = this.shieldCooldown();
+    p.invuln = 0.5;
+    sfx.block();
+    this.sparks.particleTint = 0x7fd8ff;
+    this.sparks.explode(14, p.x, p.y - 18);
+    const ring = this.add.image(p.x, p.y - 18, 'ring').setTint(0x7fd8ff).setScale(0.42).setDepth(C.DEPTH.overlay - 12);
+    this.tweens.add({ targets: ring, scale: 1.4, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+    return true;
+  }
+
+  private updateLightning(dt: number): void {
+    const p = this.player;
+    p.lightningTimer -= dt;
+    if (p.lightningTimer > 0) return;
+    const target = this.nearestEnemy(p.x, p.y, C.LIGHTNING_RANGE, []);
+    if (!target) return;
+    p.lightningTimer = C.LIGHTNING_INTERVAL;
+    this.drawLightning(p.x, p.y - 30, target.x, target.y - 16);
+    sfx.zap();
+    this.hitEnemy(target, C.LIGHTNING_DAMAGE * this.run.damageMul, 0, 0);
+  }
+
+  private drawLightning(x1: number, y1: number, x2: number, y2: number): void {
+    const g = this.add.graphics().setDepth(C.DEPTH.overlay - 9);
+    const segments = 7;
+    g.lineStyle(4, 0xfff07f, 1).beginPath().moveTo(x1, y1);
+    for (let i = 1; i < segments; i++) {
+      const t = i / segments;
+      g.lineTo(x1 + (x2 - x1) * t + Phaser.Math.Between(-14, 14), y1 + (y2 - y1) * t + Phaser.Math.Between(-14, 14));
+    }
+    g.lineTo(x2, y2).strokePath();
+    this.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
+    this.sparks.particleTint = 0xfff07f;
+    this.sparks.explode(8, x2, y2);
+  }
+
+  private explode(x: number, y: number): void {
+    const ring = this.add.image(x, y, 'ring').setTint(0xff8a3f).setScale(0.2).setDepth(C.DEPTH.overlay - 12);
+    this.tweens.add({ targets: ring, scale: (C.EXPLOSION_RADIUS * 2) / 128, alpha: 0, duration: 260, onComplete: () => ring.destroy() });
+    this.chunks.particleTint = 0xff8a3f;
+    this.chunks.explode(10, x, y - 10);
+    for (const e of [...this.enemies]) {
+      if (e.dead || isHidden(e) || Math.hypot(e.x - x, e.y - y) > C.EXPLOSION_RADIUS) continue;
+      this.hitEnemy(e, C.EXPLOSION_DAMAGE * this.run.damageMul, e.x - x, e.y - y);
+    }
+  }
+
+  // ===========================================================================
   // Враги
   // ===========================================================================
 
@@ -881,11 +1267,18 @@ export class GameScene extends Phaser.Scene {
     this.world.playerX = p.x;
     this.world.playerY = p.y;
     const pr = this.playerRadius();
+    this.aimLines.clear();
 
     for (const e of this.enemies) {
       if (e.dead) continue;
       if (!e.awake) {
         if (e.kind !== 'boss' && this.levelTime > C.START_GRACE && e.y > cam.scrollY + C.WAKE_INSET && e.y < cam.scrollY + C.GAME_HEIGHT) this.wake(e);
+        // Спящий враг за экраном: просто прячем, без анимации.
+        if (!e.awake && !this.isOnScreen(e.y)) {
+          e.sprite.setVisible(false);
+          e.shadow.setVisible(false);
+          continue;
+        }
         this.syncEnemy(e, dt);
         continue;
       }
@@ -904,8 +1297,12 @@ export class GameScene extends Phaser.Scene {
       e.ky *= damp;
       this.collideEnemy(e);
 
+      if (e.kind === 'sniper' && e.state === 'aim') this.drawAimLine(e);
+
       const reach = e.radius + pr - 4;
-      if (e.hop < 8 && Math.abs(e.x - p.x) < reach && Math.abs(e.y - p.y) < reach && Math.hypot(e.x - p.x, e.y - p.y) < reach) {
+      const canBite = e.damage > 0 && e.hop < 8 && !isHidden(e);
+      if (canBite && Math.abs(e.x - p.x) < reach && Math.abs(e.y - p.y) < reach && Math.hypot(e.x - p.x, e.y - p.y) < reach) {
+        this.applyThorns(e);
         this.hurtPlayer(e.damage, e.x, e.y);
       }
       this.syncEnemy(e, dt);
@@ -913,6 +1310,15 @@ export class GameScene extends Phaser.Scene {
 
     this.separateEnemies();
     this.enemies = this.enemies.filter((e) => !e.dead);
+  }
+
+  /** Красный лазер снайпера: тонкий, пока целится, и толстый перед выстрелом. */
+  private drawAimLine(e: Enemy): void {
+    const locked = e.timer <= 0.35;
+    const len = 900;
+    this.aimLines
+      .lineStyle(locked ? 3 : 1.5, 0xff3f3f, locked ? 0.85 : 0.45)
+      .lineBetween(e.x, e.y - 10, e.x + Math.cos(e.aim) * len, e.y - 10 + Math.sin(e.aim) * len);
   }
 
   private wake(e: Enemy): void {
@@ -927,7 +1333,15 @@ export class GameScene extends Phaser.Scene {
     e.poisonTick -= dt;
     if (e.poisonTick > 0) return;
     e.poisonTick = 0.5;
-    this.hitEnemy(e, C.POISON_DPS * 0.5 * this.run.damageMul, 0, 0, true);
+    this.hitEnemy(e, C.POISON_DPS * 0.5 * this.run.damageMul, 0, 0, 'poison');
+  }
+
+  /** Шипы: враг, коснувшийся героя, ранится (не чаще раза в секунду). */
+  private applyThorns(e: Enemy): void {
+    if (this.run.thorns <= 0) return;
+    if (this.levelTime - (this.thornsHitAt.get(e) ?? -99) < 1) return;
+    this.thornsHitAt.set(e, this.levelTime);
+    this.hitEnemy(e, C.THORNS_DAMAGE * this.run.thorns * this.run.damageMul, e.x - this.player.x, e.y - this.player.y);
   }
 
   private collideEnemy(e: Enemy): void {
@@ -988,9 +1402,14 @@ export class GameScene extends Phaser.Scene {
       .setDepth(C.DEPTH.world + e.y);
     if (e.flying) e.sprite.setRotation(Math.sin(e.wobble * 12) * 0.12);
 
-    // Замах перед тараном — мигание красным, чтобы успеть увернуться.
+    if (e.kind === 'mole') this.syncMole(e, dt);
+    if (isShielded(e)) e.sprite.setScale(s * 1.1, s * 0.7);
+
+    // Замах перед атакой — мигание красным, чтобы успеть увернуться.
     const windup = e.state === 'windup' && Math.floor(this.time.now / 90) % 2 === 0;
-    if (e.flash > 0) e.sprite.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
+    if (isHidden(e)) e.sprite.setTint(toColor(this.plan.biome.groundDark)).setTintMode(Phaser.TintModes.MULTIPLY);
+    else if (isShielded(e)) e.sprite.setTint(0x9a9aa8).setTintMode(Phaser.TintModes.MULTIPLY);
+    else if (e.flash > 0) e.sprite.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
     else if (windup) e.sprite.setTint(0xff5a4a).setTintMode(Phaser.TintModes.FILL);
     else if (e.slow > 0) e.sprite.setTint(0x9fe0ff).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (e.poison > 0) e.sprite.setTint(0xa8ff8a).setTintMode(Phaser.TintModes.MULTIPLY);
@@ -998,13 +1417,34 @@ export class GameScene extends Phaser.Scene {
 
     const lift = (e.hop + fly) / 90;
     e.shadow.setPosition(e.x, e.y).setScale((e.radius * 2.4 / 64) * (1 - lift), (e.radius * 2.4 / 64) * (1 - lift) * 0.9);
+
+    // Враги далеко за экраном не рисуются (тень крота решает syncMole).
+    const visible = this.isOnScreen(e.y);
+    e.sprite.setVisible(visible);
+    if (e.kind !== 'mole' || !visible) e.shadow.setVisible(visible);
   }
 
-  private hitEnemy(e: Enemy, damage: number, dirX: number, dirY: number, isPoison = false): void {
-    if (e.dead) return;
+  /** Под землёй крот — бегущий холмик земли; наверху — сам крот. */
+  private syncMole(e: Enemy, dt: number): void {
+    const under = isHidden(e);
+    const key = under ? 'mound' : 'mole';
+    if (e.sprite.texture.key !== key) {
+      e.sprite.setTexture(key);
+      if (!under) this.puff(e.x, e.y, toColor(this.plan.biome.groundDark), 8);
+    }
+    e.shadow.setVisible(!under);
+    if (under && e.awake && Math.random() < dt * 12) this.dust.emitParticleAt(e.x, e.y, 1);
+  }
+
+  private hitEnemy(e: Enemy, damage: number, dirX: number, dirY: number, source: HitSource = 'other'): void {
+    if (e.dead || isHidden(e)) return;
     if (!e.awake && e.kind !== 'boss') this.wake(e);
-    const dmg = Math.max(1, Math.round(damage));
+    const isPoison = source === 'poison';
+    const crit = source === 'arrow' && Math.random() < this.run.critChance;
+    const dmg = Math.max(1, Math.round(damage * (crit ? 2 : 1)));
     e.hp -= dmg;
+    this.run.stats.damageDealt += dmg;
+    if (crit) this.run.stats.crits += 1;
     e.flash = isPoison || e.kind === 'boss' ? 0.04 : 0.09;
     e.squash = isPoison ? 0.1 : 0.28;
     if (e.kind !== 'boss') {
@@ -1013,7 +1453,8 @@ export class GameScene extends Phaser.Scene {
     }
     if (!isPoison && this.has('poison')) e.poison = C.POISON_TIME;
 
-    this.popText(e.x + Phaser.Math.Between(-10, 10), e.y - 40 - e.hop, `${dmg}`, isPoison ? '#a8ff8a' : '#ffffff', isPoison ? 14 : 18);
+    const color = isPoison ? '#a8ff8a' : crit ? '#ffd23f' : '#ffffff';
+    this.popText(e.x + Phaser.Math.Between(-10, 10), e.y - 40 - e.hop, `${dmg}`, color, isPoison ? 14 : crit ? 24 : 18);
     if (!isPoison) {
       sfx.hit();
       this.hitstop = Math.max(this.hitstop, C.HITSTOP_HIT);
@@ -1026,7 +1467,9 @@ export class GameScene extends Phaser.Scene {
   private killEnemy(e: Enemy): void {
     e.dead = true;
     this.run.kills += 1;
-    const tint = ENEMY_TINT[e.kind];
+    const byKind = this.run.stats.killsByKind;
+    byKind[e.kind] = (byKind[e.kind] ?? 0) + 1;
+    const tint = enemyTint(e.kind);
 
     this.chunks.particleTint = tint;
     this.chunks.explode(e.kind === 'boss' ? 60 : 14, e.x, e.y - 16);
@@ -1057,6 +1500,10 @@ export class GameScene extends Phaser.Scene {
       this.run.hp = Math.min(this.run.maxHp, this.run.hp + C.VAMPIRE_HEAL);
       this.popText(this.player.x, this.player.y - 50, `+${C.VAMPIRE_HEAL}`, '#7fff9f', 16);
     }
+    if (this.has('adrenaline')) {
+      this.player.stamina = Math.min(this.run.maxStamina, this.player.stamina + C.ADRENALINE_STAMINA);
+    }
+    if (this.has('explosive') && e.kind !== 'boss') this.explode(e.x, e.y);
 
     if (e.kind === 'blob' && !e.small) {
       for (const s of [-1, 1]) {
@@ -1083,7 +1530,7 @@ export class GameScene extends Phaser.Scene {
       high,
       damage: Math.round((high ? 14 : 10) * this.damageScale()),
       life: SHOT_LIFETIME,
-      sprite, shadow,
+      sprite, shadow, dodged: false,
     });
     if (this.time.now - this.lastShotSfx > 70) {
       this.lastShotSfx = this.time.now;
@@ -1115,6 +1562,11 @@ export class GameScene extends Phaser.Scene {
           s.life = 0;
           continue;
         }
+        // Пролетел над присевшим или сквозь перекат — засчитываем уклонение.
+        if (!s.dodged && (ducked || p.roll > 0)) {
+          s.dodged = true;
+          this.run.stats.dodges += 1;
+        }
       }
       const h = s.high ? C.HIGH_SHOT_HEIGHT : 8;
       s.sprite.setPosition(s.x, s.y - h).setDepth(C.DEPTH.world + s.y + (s.high ? 40 : 0)).setScale(1 + Math.sin(t * 20 + s.x) * 0.08);
@@ -1128,12 +1580,15 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** Убирает все вражеские снаряды сразу (после победы над боссом). */
   private clearShots(): void {
     for (const s of this.shots) {
       this.sparks.particleTint = s.high ? 0xffb03f : 0xd27bff;
       this.sparks.explode(2, s.x, s.y);
-      s.life = 0;
+      s.sprite.destroy();
+      s.shadow.destroy();
     }
+    this.shots = [];
   }
 
   private spawnBlast(x: number, y: number, r: number, delay: number): void {
@@ -1203,7 +1658,7 @@ export class GameScene extends Phaser.Scene {
       const dx = p.x - o.x;
       const dy = p.y - o.y;
       const d = Math.hypot(dx, dy);
-      if (o.age > 0.35 && (magnetAll || d < C.XP_MAGNET_RADIUS)) {
+      if (o.age > 0.35 && (magnetAll || d < C.XP_MAGNET_RADIUS * this.run.magnetMul)) {
         const pull = 340 + o.age * 300;
         o.vx += ((dx / d) * pull - o.vx) * Math.min(1, dt * 8);
         o.vy += ((dy / d) * pull - o.vy) * Math.min(1, dt * 8);
@@ -1230,6 +1685,7 @@ export class GameScene extends Phaser.Scene {
 
   private collectOrb(o: Orb): void {
     this.run.xp += o.value;
+    this.run.stats.orbs += 1;
     o.value = 0;
     o.sprite.destroy();
     o.shadow.destroy();
@@ -1283,6 +1739,8 @@ export class GameScene extends Phaser.Scene {
       this.mode = 'choice';
       showChoice(this, 'Новое усиление', rollChoices(UPGRADES, this.run), (c) => {
         c.apply(this.run);
+        this.run.upgrades.push(c.id);
+        if (c.id === 'shield') this.player.shieldReady = true;
         this.player.stamina = Math.min(this.player.stamina, this.run.maxStamina);
         this.runChoices(onDone);
       });
@@ -1311,10 +1769,13 @@ export class GameScene extends Phaser.Scene {
     boss.squash = 0.4;
     this.time.delayedCall(1300, () => {
       boss.awake = true;
+      this.bossStartTime = this.levelTime;
     });
   }
 
   private onBossDefeated(boss: Enemy): void {
+    this.run.stats.bosses += 1;
+    this.run.stats.bossTimes.push(Math.round(this.levelTime - this.bossStartTime));
     this.hitstop = C.HITSTOP_BOSS_KILL;
     this.cameras.main.shake(900, 0.02);
     this.cameras.main.flash(300, 255, 240, 200);
@@ -1342,6 +1803,11 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
+    // Вершина вулкана: вместо награды — спасение на вертолёте.
+    if (this.isFinalLevel()) {
+      this.startEnding();
+      return;
+    }
     this.pendingAbility = true;
     this.time.delayedCall(1400, () => {
       if (this.mode === 'play') this.runChoices(() => this.resumePlay());
@@ -1387,10 +1853,6 @@ export class GameScene extends Phaser.Scene {
     const run = this.run;
     run.level += 1;
     run.hp = Math.min(run.maxHp, run.hp + run.maxHp * 0.1);
-    if (run.level > C.LEVELS_PER_SEASON) {
-      this.showSeasonEnd();
-      return;
-    }
     saveRun(run);
     const cam = this.cameras.main;
     cam.fadeOut(450, 20, 10, 30);
@@ -1405,6 +1867,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(400, 0.02);
     this.hurtFlash = 1;
     p.bow.setVisible(false);
+    p.nocked.setVisible(false);
     this.tweens.add({ targets: p.sprite, angle: 90, scaleY: 0.6, duration: 500, ease: 'Bounce.Out' });
     this.chunks.particleTint = 0xff4f5f;
     this.chunks.explode(20, p.x, p.y - 16);
@@ -1420,30 +1883,306 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private showSeasonEnd(): void {
-    this.mode = 'end';
+  // ===========================================================================
+  // Финал: спасение на вертолёте
+  // ===========================================================================
+
+  /** Куда герой сам идёт во время катсцены (null — стоит или висит на лестнице). */
+  private endTarget: { x: number; y: number } | null = null;
+  private climbing = false;
+
+  /**
+   * Катсцена после победы над Лавовым монстром:
+   * герой выходит в центр кратера → пускает сигнальную ракету → прилетает вертолёт →
+   * спускается лестница → герой забирается → вертолёт улетает → экран статистики.
+   */
+  private startEnding(): void {
+    this.mode = 'ending';
+    this.climbing = false;
     clearRun();
-    const season = getSeason(this.run.season);
-    const next = getSeason(this.run.season + 1);
-    sfx.levelUp();
-    this.showPanel(
-      'Вершина покорена!',
-      `Сезон «${season.name}» пройден · врагов повержено: ${this.run.kills}\nДальше — сезон «${next.name}»: всё заново и в новой стилистике.`,
-      'Новый сезон',
-      () => this.scene.restart({ run: newRun(this.run.season + 1) }),
-    );
+    sfx.victory();
+    const p = this.player;
+    p.roll = 0;
+    p.crouch = false;
+    const at = (ms: number, fn: () => void) => this.time.delayedCall(ms, fn);
+
+    at(1200, () => { this.endTarget = { x: C.GAME_WIDTH / 2, y: 470 }; });
+    at(2600, () => this.fireFlare());
+    at(3600, () => this.heliArrive());
+    at(6000, () => this.dropLadder());
+    at(6800, () => this.climbLadder());
+    at(8300, () => this.heliDepart());
+    at(9900, () => {
+      const cam = this.cameras.main;
+      cam.fadeOut(1100, 255, 246, 225);
+      cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => this.scene.start('EndScene', { run: this.run }));
+    });
+  }
+
+  private stepEnding(dt: number): void {
+    const p = this.player;
+    this.updateArrows(dt);
+    this.updateOrbs(dt, true);
+    this.updateHeli(dt);
+    if (this.climbing) return;
+    if (this.endTarget) {
+      p.vx = (this.endTarget.x - p.x) * 2.2;
+      p.vy = (this.endTarget.y - p.y) * 2.2;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (Math.hypot(this.endTarget.x - p.x, this.endTarget.y - p.y) < 3) this.endTarget = null;
+    } else {
+      p.vx = 0;
+      p.vy = 0;
+      p.aim = -Math.PI / 2;
+    }
+    this.syncPlayer(dt);
+  }
+
+  /** Сигнальная ракета: красная звезда взлетает вверх и вспыхивает. */
+  private fireFlare(): void {
+    const p = this.player;
+    sfx.flare();
+    const flare = this.add.image(p.x, p.y - 30, 'soft').setTint(0xff4f3f).setScale(0.8).setBlendMode(Phaser.BlendModes.ADD).setDepth(C.DEPTH.overlay - 8);
+    const trail = this.add.particles(0, 0, 'soft', {
+      follow: flare, lifespan: 600, speed: { min: 5, max: 30 }, scale: { start: 0.5, end: 0 },
+      tint: [0xff4f3f, 0xffb03f], blendMode: 'ADD', frequency: 20,
+    }).setDepth(C.DEPTH.overlay - 9);
+    this.tweens.add({
+      targets: flare, y: p.y - 420, duration: 1100, ease: 'Quad.Out',
+      onComplete: () => {
+        this.sparks.particleTint = 0xff4f3f;
+        this.sparks.explode(30, flare.x, flare.y);
+        this.cameras.main.flash(200, 255, 120, 100);
+        sfx.boom();
+        flare.destroy();
+        this.time.delayedCall(600, () => trail.destroy());
+      },
+    });
+  }
+
+  private heliArrive(): void {
+    const body = this.add.image(C.GAME_WIDTH + 200, -150, 'heli').setDepth(C.DEPTH.overlay - 7).setAngle(-8);
+    const rotor = this.add.image(body.x, body.y, 'rotor').setDepth(C.DEPTH.overlay - 6).setAlpha(0.8);
+    const shadow = this.add.image(body.x, body.y, 'shadow').setDepth(C.DEPTH.shadow).setScale(3, 2).setAlpha(0);
+    const ladder = this.add.graphics().setDepth(C.DEPTH.overlay - 8);
+    this.heli = { body, rotor, shadow, ladder, chop: 0 };
+    this.ladderLength = 0;
+    this.tweens.add({ targets: body, x: C.GAME_WIDTH / 2 + 10, y: 250, angle: 0, duration: 2300, ease: 'Sine.Out' });
+  }
+
+  /** Длина верёвочной лестницы под вертолётом. */
+  private ladderLength = 0;
+
+  private dropLadder(): void {
+    if (!this.heli) return;
+    sfx.select();
+    this.tweens.add({ targets: this, ladderLength: this.player.y - 20 - (this.heli.body.y + 30), duration: 600, ease: 'Bounce.Out' });
+  }
+
+  private climbLadder(): void {
+    const p = this.player;
+    const heli = this.heli;
+    if (!heli) return;
+    this.climbing = true;
+    p.bow.setVisible(false);
+    p.nocked.setVisible(false);
+    p.orbitSprites.forEach((s) => s.setVisible(false));
+    p.shieldRing.setVisible(false);
+    p.sprite.setRotation(0).setScale(1).setDepth(C.DEPTH.overlay - 7.5);
+    this.tweens.add({ targets: p.shadow, alpha: 0, duration: 800 });
+    this.tweens.add({ targets: p.sprite, y: heli.body.y + 50, duration: 1400, ease: 'Sine.InOut' });
+    this.tweens.add({ targets: this, ladderLength: 40, duration: 1400, ease: 'Sine.InOut' });
+    this.tweens.add({ targets: p.sprite, angle: { from: -6, to: 6 }, duration: 180, yoyo: true, repeat: 7 });
+  }
+
+  private heliDepart(): void {
+    const heli = this.heli;
+    if (!heli) return;
+    sfx.gateOpen();
+    const dx = -C.GAME_WIDTH;
+    const dy = -520;
+    this.tweens.add({ targets: heli.body, x: heli.body.x + dx, y: heli.body.y + dy, angle: -14, duration: 2600, ease: 'Sine.In' });
+    this.tweens.add({ targets: this.player.sprite, x: this.player.sprite.x + dx, y: this.player.sprite.y + dy, duration: 2600, ease: 'Sine.In' });
+  }
+
+  /** Винт крутится, вертолёт стрекочет и поднимает пыль, лестница качается. */
+  private updateHeli(dt: number): void {
+    const heli = this.heli;
+    if (!heli) return;
+    const { body, rotor, shadow, ladder } = heli;
+    rotor.setPosition(body.x - 29, body.y - 39).setRotation(rotor.rotation + dt * 32);
+
+    heli.chop -= dt;
+    if (heli.chop <= 0) {
+      heli.chop = 0.085;
+      sfx.chop();
+    }
+
+    const groundY = 470;
+    const height = Math.max(0, groundY - body.y);
+    shadow.setPosition(body.x, groundY).setAlpha(Phaser.Math.Clamp(0.6 - height / 900, 0, 0.5));
+    if (height < 320 && Math.random() < dt * 30) this.dust.emitParticleAt(body.x + Phaser.Math.Between(-120, 120), groundY, 1);
+
+    ladder.clear();
+    if (this.ladderLength <= 0) return;
+    const sway = Math.sin(this.time.now / 260) * 6;
+    const topY = body.y + 30;
+    const bottomY = topY + this.ladderLength;
+    ladder.lineStyle(2, 0xe8dcc0, 1);
+    ladder.lineBetween(body.x - 8, topY, body.x - 8 + sway, bottomY);
+    ladder.lineBetween(body.x + 8, topY, body.x + 8 + sway, bottomY);
+    ladder.lineStyle(2, 0x9a6a42, 1);
+    for (let y = topY + 10; y < bottomY; y += 12) {
+      const s = sway * ((y - topY) / this.ladderLength);
+      ladder.lineBetween(body.x - 8 + s, y, body.x + 8 + s, y);
+    }
+  }
+
+  // ===========================================================================
+  // Пауза
+  // ===========================================================================
+
+  private togglePause(): void {
+    if (this.mode === 'play') this.openPause();
+    else if (this.mode === 'pause') this.closePause();
+  }
+
+  private openPause(): void {
+    this.mode = 'pause';
+    this.time.paused = true;
+    this.tweens.pauseAll();
+    sfx.pause();
+
+    const cx = C.GAME_WIDTH / 2;
+    const style = { fontFamily: C.FONT, fontStyle: 'bold', stroke: '#1a1020', align: 'center' };
+    const parts: Phaser.GameObjects.GameObject[] = [];
+    const fixed = <O extends Phaser.GameObjects.GameObject & { setScrollFactor(x: number): O; setDepth(d: number): O }>(o: O): O => {
+      parts.push(o.setScrollFactor(0).setDepth(C.DEPTH.modal + 1));
+      return o;
+    };
+
+    fixed(this.add.rectangle(cx, C.GAME_HEIGHT / 2, C.GAME_WIDTH, C.GAME_HEIGHT, 0x140a20, 0.9));
+    fixed(this.add.text(cx, 92, 'Пауза', { ...style, fontSize: '48px', color: '#fff3c4', strokeThickness: 8 }).setOrigin(0.5));
+    fixed(this.add.text(cx, 150, `${this.plan.biome.name} · уровень ${this.run.level}/${C.LEVELS_PER_SEASON}`, {
+      ...style, fontSize: '20px', color: '#ffd8a0', strokeThickness: 4,
+    }).setOrigin(0.5));
+    fixed(this.add.text(cx, 200, this.buildSummary(), {
+      ...style, fontSize: '16px', color: '#e8dccc', strokeThickness: 3, lineSpacing: 6, wordWrap: { width: 700 },
+    }).setOrigin(0.5, 0));
+
+    this.pauseButton(fixed, 360, 'Продолжить', true, () => this.closePause());
+    this.pauseButton(fixed, 422, 'Начать уровень заново', false, () => this.leavePause(() => {
+      this.scene.restart({ run: loadRun() ?? newRun(this.run.season) });
+    }));
+    this.pauseButton(fixed, 484, 'Главное меню', false, () => this.leavePause(() => this.scene.start('MenuScene')));
+
+    fixed(this.add.text(cx, C.GAME_HEIGHT - 50, 'Esc — продолжить   ·   WASD — идти   ·   Shift — перекат   ·   C / ПКМ — присесть', {
+      ...style, fontSize: '15px', color: '#b8a8b8', strokeThickness: 3,
+    }).setOrigin(0.5));
+    this.pauseParts = parts;
+  }
+
+  /** Сводка прокачки героя для экрана паузы. */
+  private buildSummary(): string {
+    const r = this.run;
+    const pct = (v: number) => `+${Math.round((v - 1) * 100)}%`;
+    const bow = [
+      `стрел подряд: ${r.burst}`,
+      r.spread ? 'веер \\|/' : '',
+      r.ring ? 'кольцо' : '',
+      r.damageMul > 1 ? `урон ${pct(r.damageMul)}` : '',
+      r.fireRateMul > 1 ? `скорострельность ${pct(r.fireRateMul)}` : '',
+    ].filter(Boolean).join(' · ');
+    const body = `здоровье ${Math.ceil(r.hp)}/${r.maxHp} · выносливость ${r.maxStamina}`
+      + (r.speedMul > 1 ? ` · скорость ${pct(r.speedMul)}` : '');
+    const armor = [
+      r.orbit > 0 ? `орбита ×${r.orbit}` : '',
+      r.shield > 0 ? `щит ур. ${r.shield}` : '',
+      r.thorns > 0 ? `шипы ур. ${r.thorns}` : '',
+      r.critChance > 0 ? `крит ${Math.round(r.critChance * 100)}%` : '',
+      r.regen > 0 ? `реген ${r.regen} HP/с` : '',
+      r.magnetMul > 1 ? 'магнит' : '',
+    ].filter(Boolean).join(' · ');
+    const abilities = r.abilities.map((id) => ABILITIES.find((a) => a.id === id)?.title ?? id).join(', ') || 'пока нет';
+    return `Лук: ${bow}\nГерой: ${body}\nБроня: ${armor || 'пока нет'}\nАбилки: ${abilities}\nВрагов повержено: ${r.kills}`;
+  }
+
+  private pauseButton(
+    fixed: <O extends Phaser.GameObjects.Text>(o: O) => O,
+    y: number,
+    label: string,
+    primary: boolean,
+    onClick: () => void,
+  ): void {
+    const button = fixed(this.add.text(C.GAME_WIDTH / 2, y, label, {
+      fontFamily: C.FONT, fontStyle: 'bold', fontSize: '24px', color: '#1a1020',
+      backgroundColor: primary ? '#ffd23f' : '#f3ead6', padding: { x: 24, y: 10 },
+    }).setOrigin(0.5));
+    // Твины на паузе остановлены, поэтому наведение — мгновенное.
+    button.setInteractive({ useHandCursor: true })
+      .on('pointerover', () => { button.setScale(1.06); sfx.select(); })
+      .on('pointerout', () => button.setScale(1))
+      .on('pointerdown', onClick);
+  }
+
+  private closePause(): void {
+    this.destroyPause();
+    this.mode = 'play';
+    this.player.invuln = Math.max(this.player.invuln, 0.5);
+    sfx.pause();
+    // Если пока стояли на паузе накопились выборы (например, после босса) — показываем.
+    if (this.pendingAbility || this.pendingUpgrades > 0) this.runChoices(() => this.resumePlay());
+  }
+
+  private leavePause(next: () => void): void {
+    this.destroyPause();
+    sfx.pick();
+    next();
+  }
+
+  private destroyPause(): void {
+    this.pauseParts?.forEach((p) => p.destroy());
+    this.pauseParts = null;
+    this.time.paused = false;
+    this.tweens.resumeAll();
   }
 
   // ===========================================================================
   // UI-эффекты
   // ===========================================================================
 
+  /**
+   * Всплывающий текст. Цифры урона идут через растровый шрифт и пул объектов —
+   * это дёшево даже при десятках попаданий в секунду.
+   */
   private popText(x: number, y: number, text: string, color: string, size: number): void {
+    if ([...text].every((ch) => DAMAGE_FONT_CHARS.includes(ch))) {
+      this.popNumber(x, y, text, color, size);
+      return;
+    }
     const t = this.add.text(x, y, text, {
       fontFamily: C.FONT, fontSize: `${size}px`, fontStyle: 'bold', color, stroke: '#1a1020', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(C.DEPTH.overlay - 1).setScale(0.4);
     this.tweens.add({ targets: t, scale: 1, duration: 120, ease: 'Back.Out' });
     this.tweens.add({ targets: t, y: y - 34, alpha: 0, delay: 200, duration: 450, ease: 'Quad.In', onComplete: () => t.destroy() });
+  }
+
+  private popNumber(x: number, y: number, text: string, color: string, size: number): void {
+    if (this.popActive >= C.MAX_POPUPS) return;
+    const t = this.popPool.pop() ?? this.add.bitmapText(0, 0, 'dmg', '').setOrigin(0.5).setDepth(C.DEPTH.overlay - 1);
+    this.popActive += 1;
+    const scale = size / 22;
+    t.setText(text).setPosition(x, y).setTint(toColor(color)).setAlpha(1).setVisible(true).setScale(scale * 0.4);
+    this.tweens.add({ targets: t, scale, duration: 120, ease: 'Back.Out' });
+    this.tweens.add({
+      targets: t, y: y - 34, alpha: 0, delay: 200, duration: 450, ease: 'Quad.In',
+      onComplete: () => {
+        t.setVisible(false);
+        this.popPool.push(t);
+        this.popActive -= 1;
+      },
+    });
   }
 
   private puff(x: number, y: number, tint: number, count: number): void {

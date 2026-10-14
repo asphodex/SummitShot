@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, FONT, GAME_HEIGHT, GAME_WIDTH, LEVELS_PER_SEASON } from './constants';
+import { DEPTH, FONT, GAME_HEIGHT, GAME_TITLE, GAME_WIDTH, LEVELS_PER_SEASON } from './constants';
 import { getSeason, planLevel } from './season';
 import { sfx } from './sfx';
 import { biomeKey, createBiomeTextures, createCommonTextures, toColor } from './textures';
@@ -45,7 +45,7 @@ export class MenuScene extends Phaser.Scene {
     this.add.image(0, 0, 'fog').setOrigin(0).setDisplaySize(GAME_WIDTH, 220).setTint(toColor(biome.fog)).setAlpha(0.7).setDepth(DEPTH.overlay);
     this.add.image(0, 0, 'vignette').setOrigin(0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT).setDepth(DEPTH.overlay);
 
-    const title = this.add.text(GAME_WIDTH / 2, 120, 'ТРОПА ЛУЧНИКА', {
+    const title = this.add.text(GAME_WIDTH / 2, 120, GAME_TITLE, {
       fontFamily: FONT, fontSize: '68px', fontStyle: 'bold', color: '#fff6dc', stroke: '#1a1020', strokeThickness: 10,
     }).setOrigin(0.5).setScale(0.6).setAlpha(0).setDepth(DEPTH.hud);
     this.tweens.add({ targets: title, scale: 1, alpha: 1, duration: 700, ease: 'Back.Out' });
@@ -62,7 +62,7 @@ export class MenuScene extends Phaser.Scene {
     }
     this.button(y, 'Новый забег', () => this.start(newRun(season)), !saved);
 
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 44, 'WASD / стрелки — идти     Shift — перекат     C / ПКМ — присесть', {
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 44, 'WASD / стрелки — идти     Shift — перекат     C / ПКМ — присесть     Esc — пауза', {
       fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#ffffff', stroke: '#1a1020', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(DEPTH.hud);
   }
