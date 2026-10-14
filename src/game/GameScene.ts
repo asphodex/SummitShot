@@ -122,6 +122,8 @@ export class GameScene extends Phaser.Scene {
   private sparks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private chunks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private hurtOverlay!: Img;
+  private fog!: Img;
+  private vignette!: Img;
   private arrowTrail!: Phaser.GameObjects.Particles.ParticleEmitter;
 
   private hitstop = 0;
@@ -176,7 +178,7 @@ export class GameScene extends Phaser.Scene {
     saveRun(run);
 
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, C.GAME_WIDTH, this.plan.length);
+    this.fitCamera();
     cam.setBackgroundColor(this.plan.biome.groundDark);
 
     this.buildWorld();
@@ -186,7 +188,7 @@ export class GameScene extends Phaser.Scene {
     this.setupInput();
     this.hud = new Hud(this, this.plan.biome.name, run.level);
 
-    cam.scrollY = this.plan.length - C.GAME_HEIGHT;
+    cam.scrollY = this.plan.length - cam.height;
     cam.fadeIn(450, 20, 10, 30);
     this.showBanner();
   }
@@ -245,7 +247,7 @@ export class GameScene extends Phaser.Scene {
     const b = this.plan.biome;
     const L = this.plan.length;
 
-    this.add.tileSprite(0, 0, C.GAME_WIDTH, L, biomeKey(b, 'ground')).setOrigin(0).setDepth(C.DEPTH.ground);
+    this.add.tileSprite(-C.SIDE_EXTRA, 0, C.GAME_WIDTH + C.SIDE_EXTRA * 2, L, biomeKey(b, 'ground')).setOrigin(0).setDepth(C.DEPTH.ground);
 
     for (const d of this.layout.decals) {
       this.keepDecor(this.add.image(d.x, d.y, biomeKey(b, `decal${d.variant}`)).setDepth(C.DEPTH.decal).setAlpha(0.85), d.y);
@@ -287,12 +289,34 @@ export class GameScene extends Phaser.Scene {
     if (this.arena) this.buildArena(this.arena);
 
     // Атмосфера: туман сверху, виньетка, красная вспышка урона.
-    this.add.image(0, 0, 'fog').setOrigin(0).setDisplaySize(C.GAME_WIDTH, 170)
+    this.fog = this.add.image(0, 0, 'fog').setOrigin(0)
       .setScrollFactor(0).setDepth(C.DEPTH.overlay).setTint(toColor(b.fog)).setAlpha(0.6);
-    this.add.image(0, 0, 'vignette').setOrigin(0).setDisplaySize(C.GAME_WIDTH, C.GAME_HEIGHT)
+    this.vignette = this.add.image(0, 0, 'vignette').setOrigin(0)
       .setScrollFactor(0).setDepth(C.DEPTH.overlay + 1);
-    this.hurtOverlay = this.add.image(0, 0, 'hurt').setOrigin(0).setDisplaySize(C.GAME_WIDTH, C.GAME_HEIGHT)
+    this.hurtOverlay = this.add.image(0, 0, 'hurt').setOrigin(0)
       .setScrollFactor(0).setDepth(C.DEPTH.overlay + 2).setAlpha(0);
+    this.fitOverlays();
+  }
+
+  /** Камера по центру поля; на широком экране видно больше скал по бокам. */
+  private fitCamera(): void {
+    const w = this.scale.width;
+    this.cameras.main.setBounds((C.GAME_WIDTH - w) / 2, 0, w, this.plan.length);
+  }
+
+  private fitOverlays(): void {
+    const { width, height } = this.scale;
+    this.fog.setDisplaySize(width, 170);
+    this.vignette.setDisplaySize(width, height);
+    this.hurtOverlay.setDisplaySize(width, height);
+    this.fpsText?.setPosition(width - 16, 60);
+  }
+
+  /** Окно изменило размер: подгоняем камеру и экранные слои. */
+  private onResize(): void {
+    this.fitCamera();
+    this.fitOverlays();
+    this.lastCullY = Number.NaN;
   }
 
   private toggleFps(): void {
@@ -301,7 +325,7 @@ export class GameScene extends Phaser.Scene {
       this.fpsText = null;
       return;
     }
-    this.fpsText = this.add.text(C.GAME_WIDTH - 16, 60, '', {
+    this.fpsText = this.add.text(this.scale.width - 16, 60, '', {
       fontFamily: 'monospace', fontSize: '14px', color: '#9cffd6', backgroundColor: '#1a1020', padding: { x: 6, y: 3 },
     }).setOrigin(1, 0).setScrollFactor(0).setDepth(C.DEPTH.modal + 5);
   }
@@ -321,7 +345,7 @@ export class GameScene extends Phaser.Scene {
 
   private isOnScreen(y: number): boolean {
     const top = this.cameras.main.scrollY - C.CULL_MARGIN;
-    return y > top && y < top + C.GAME_HEIGHT + C.CULL_MARGIN * 2;
+    return y > top && y < top + this.cameras.main.height + C.CULL_MARGIN * 2;
   }
 
   /**
@@ -339,8 +363,8 @@ export class GameScene extends Phaser.Scene {
     const b = this.plan.biome;
     const L = this.plan.length;
     const dark = toColor(b.cliffDark);
-    this.add.rectangle(0, 0, C.SIDE_WALL, L, dark).setOrigin(0).setDepth(C.DEPTH.decal);
-    this.add.rectangle(C.GAME_WIDTH - C.SIDE_WALL, 0, C.SIDE_WALL, L, dark).setOrigin(0).setDepth(C.DEPTH.decal);
+    this.add.rectangle(-C.SIDE_EXTRA, 0, C.SIDE_EXTRA + C.SIDE_WALL, L, dark).setOrigin(0).setDepth(C.DEPTH.decal);
+    this.add.rectangle(C.GAME_WIDTH - C.SIDE_WALL, 0, C.SIDE_EXTRA + C.SIDE_WALL, L, dark).setOrigin(0).setDepth(C.DEPTH.decal);
     const rng = this.plan.rng;
     for (let y = -40; y < L + 80; y += 62) {
       for (const side of [0, 1]) {
@@ -351,6 +375,31 @@ export class GameScene extends Phaser.Scene {
           .setScale(rng.realInRange(0.8, 1.1))
           .setFlipX(side === 1)
           .setDepth(C.DEPTH.world + yy + 40), yy);
+      }
+    }
+    this.buildOuterCliffs(rng);
+  }
+
+  /**
+   * Дальние скалы за краями поля — видны только на широких экранах.
+   * Темнее и крупнее, чтобы читались как задний план, а не как препятствия.
+   */
+  private buildOuterCliffs(rng: Phaser.Math.RandomDataGenerator): void {
+    const b = this.plan.biome;
+    for (let y = -60; y < this.plan.length + 100; y += 84) {
+      for (let col = 1; col * C.OUTER_CLIFF_STEP < C.SIDE_EXTRA; col++) {
+        for (const side of [0, 1]) {
+          const offset = col * C.OUTER_CLIFF_STEP + rng.between(-25, 25);
+          const x = side === 0 ? -offset : C.GAME_WIDTH + offset;
+          const yy = y + rng.between(-30, 30);
+          const shade = Math.max(0x80, 0xd8 - col * 0x18);
+          this.keepDecor(this.add.image(x, yy, biomeKey(b, 'cliff'))
+            .setOrigin(0.5, 0.7)
+            .setScale(rng.realInRange(1.1, 1.5))
+            .setFlipX(rng.frac() < 0.5)
+            .setTint(Phaser.Display.Color.GetColor(shade, shade, shade))
+            .setDepth(C.DEPTH.world + yy + 40), yy);
+        }
       }
     }
   }
@@ -497,8 +546,8 @@ export class GameScene extends Phaser.Scene {
 
   private createAmbient(): void {
     const b = this.plan.biome;
-    const W = C.GAME_WIDTH;
-    const H = C.GAME_HEIGHT;
+    const W = this.scale.width;
+    const H = this.scale.height;
     const configs: Record<string, Phaser.Types.GameObjects.Particles.ParticleEmitterConfig & { texture: string }> = {
       snow: { texture: 'dot', x: { min: -40, max: W }, y: -10, lifespan: 9000, speedX: { min: -15, max: 35 }, speedY: { min: 40, max: 95 }, scale: { min: 0.25, max: 0.7 }, alpha: 0.9, frequency: 45 },
       leaves: { texture: 'leaf', x: { min: -60, max: W }, y: -10, lifespan: 9000, speedX: { min: 20, max: 60 }, speedY: { min: 35, max: 70 }, rotate: { start: 0, end: 540 }, tint: toColor(b.foliageLight), alpha: 0.85, frequency: 260 },
@@ -566,7 +615,12 @@ export class GameScene extends Phaser.Scene {
       if (this.mode === 'play') this.openPause();
     };
     this.game.events.on(Phaser.Core.Events.BLUR, onBlur);
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.game.events.off(Phaser.Core.Events.BLUR, onBlur));
+    const onResize = () => this.onResize();
+    this.scale.on(Phaser.Scale.Events.RESIZE, onResize);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.events.off(Phaser.Core.Events.BLUR, onBlur);
+      this.scale.off(Phaser.Scale.Events.RESIZE, onResize);
+    });
   }
 
   // ===========================================================================
@@ -894,7 +948,7 @@ export class GameScene extends Phaser.Scene {
       cam.scrollY += (this.arena.top - cam.scrollY) * Math.min(1, dt * 4);
       return;
     }
-    const target = Phaser.Math.Clamp(this.player.y - C.GAME_HEIGHT * C.CAMERA_ANCHOR, 0, this.plan.length - C.GAME_HEIGHT);
+    const target = Phaser.Math.Clamp(this.player.y - cam.height * C.CAMERA_ANCHOR, 0, this.plan.length - cam.height);
     cam.scrollY += (target - cam.scrollY) * Math.min(1, dt * 8);
   }
 
@@ -1066,7 +1120,7 @@ export class GameScene extends Phaser.Scene {
       a.y += a.vy * dt;
       a.life -= dt;
 
-      const offscreen = a.y < cam.scrollY - 40 || a.y > cam.scrollY + C.GAME_HEIGHT + 40 || a.x < 0 || a.x > C.GAME_WIDTH;
+      const offscreen = a.y < cam.scrollY - 40 || a.y > cam.scrollY + cam.height + 40 || a.x < 0 || a.x > C.GAME_WIDTH;
       if (offscreen) a.life = 0;
       if (a.life <= 0) continue;
 
@@ -1272,7 +1326,7 @@ export class GameScene extends Phaser.Scene {
     for (const e of this.enemies) {
       if (e.dead) continue;
       if (!e.awake) {
-        if (e.kind !== 'boss' && this.levelTime > C.START_GRACE && e.y > cam.scrollY + C.WAKE_INSET && e.y < cam.scrollY + C.GAME_HEIGHT) this.wake(e);
+        if (e.kind !== 'boss' && this.levelTime > C.START_GRACE && e.y > cam.scrollY + C.WAKE_INSET && e.y < cam.scrollY + cam.height) this.wake(e);
         // Спящий враг за экраном: просто прячем, без анимации.
         if (!e.awake && !this.isOnScreen(e.y)) {
           e.sprite.setVisible(false);
@@ -1548,7 +1602,7 @@ export class GameScene extends Phaser.Scene {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.life -= dt;
-      if (s.y > cam.scrollY + C.GAME_HEIGHT + 60 || s.y < cam.scrollY - 200 || s.x < 0 || s.x > C.GAME_WIDTH) s.life = 0;
+      if (s.y > cam.scrollY + cam.height + 60 || s.y < cam.scrollY - 200 || s.x < 0 || s.x > C.GAME_WIDTH) s.life = 0;
       if (!s.high && this.obstacles.some((o) => Math.hypot(o.x - s.x, o.y - s.y) < o.r)) {
         s.life = 0;
         this.dust.explode(3, s.x, s.y);
@@ -1962,7 +2016,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private heliArrive(): void {
-    const body = this.add.image(C.GAME_WIDTH + 200, -150, 'heli').setDepth(C.DEPTH.overlay - 7).setAngle(-8);
+    const body = this.add.image(C.GAME_WIDTH / 2 + this.scale.width / 2 + 200, -150, 'heli').setDepth(C.DEPTH.overlay - 7).setAngle(-8);
     const rotor = this.add.image(body.x, body.y, 'rotor').setDepth(C.DEPTH.overlay - 6).setAlpha(0.8);
     const shadow = this.add.image(body.x, body.y, 'shadow').setDepth(C.DEPTH.shadow).setScale(3, 2).setAlpha(0);
     const ladder = this.add.graphics().setDepth(C.DEPTH.overlay - 8);
@@ -2000,7 +2054,7 @@ export class GameScene extends Phaser.Scene {
     const heli = this.heli;
     if (!heli) return;
     sfx.gateOpen();
-    const dx = -C.GAME_WIDTH;
+    const dx = -this.scale.width;
     const dy = -520;
     this.tweens.add({ targets: heli.body, x: heli.body.x + dx, y: heli.body.y + dy, angle: -14, duration: 2600, ease: 'Sine.In' });
     this.tweens.add({ targets: this.player.sprite, x: this.player.sprite.x + dx, y: this.player.sprite.y + dy, duration: 2600, ease: 'Sine.In' });
@@ -2054,7 +2108,7 @@ export class GameScene extends Phaser.Scene {
     this.tweens.pauseAll();
     sfx.pause();
 
-    const cx = C.GAME_WIDTH / 2;
+    const cx = this.scale.width / 2;
     const style = { fontFamily: C.FONT, fontStyle: 'bold', stroke: '#1a1020', align: 'center' };
     const parts: Phaser.GameObjects.GameObject[] = [];
     const fixed = <O extends Phaser.GameObjects.GameObject & { setScrollFactor(x: number): O; setDepth(d: number): O }>(o: O): O => {
@@ -2062,7 +2116,7 @@ export class GameScene extends Phaser.Scene {
       return o;
     };
 
-    fixed(this.add.rectangle(cx, C.GAME_HEIGHT / 2, C.GAME_WIDTH, C.GAME_HEIGHT, 0x140a20, 0.9));
+    fixed(this.add.rectangle(cx, this.scale.height / 2, this.scale.width, this.scale.height, 0x140a20, 0.9));
     fixed(this.add.text(cx, 92, 'Пауза', { ...style, fontSize: '48px', color: '#fff3c4', strokeThickness: 8 }).setOrigin(0.5));
     fixed(this.add.text(cx, 150, `${this.plan.biome.name} · уровень ${this.run.level}/${C.LEVELS_PER_SEASON}`, {
       ...style, fontSize: '20px', color: '#ffd8a0', strokeThickness: 4,
@@ -2077,7 +2131,7 @@ export class GameScene extends Phaser.Scene {
     }));
     this.pauseButton(fixed, 484, 'Главное меню', false, () => this.leavePause(() => this.scene.start('MenuScene')));
 
-    fixed(this.add.text(cx, C.GAME_HEIGHT - 50, 'Esc — продолжить   ·   WASD — идти   ·   Shift — перекат   ·   C / ПКМ — присесть', {
+    fixed(this.add.text(cx, this.scale.height - 50, 'Esc — продолжить   ·   WASD — идти   ·   Shift — перекат   ·   C / ПКМ — присесть', {
       ...style, fontSize: '15px', color: '#b8a8b8', strokeThickness: 3,
     }).setOrigin(0.5));
     this.pauseParts = parts;
@@ -2115,7 +2169,7 @@ export class GameScene extends Phaser.Scene {
     primary: boolean,
     onClick: () => void,
   ): void {
-    const button = fixed(this.add.text(C.GAME_WIDTH / 2, y, label, {
+    const button = fixed(this.add.text(this.scale.width / 2, y, label, {
       fontFamily: C.FONT, fontStyle: 'bold', fontSize: '24px', color: '#1a1020',
       backgroundColor: primary ? '#ffd23f' : '#f3ead6', padding: { x: 24, y: 10 },
     }).setOrigin(0.5));
@@ -2196,9 +2250,9 @@ export class GameScene extends Phaser.Scene {
     const main = title ?? plan.biome.name;
     const sub = subtitle ?? (plan.isBoss ? `Уровень ${plan.level} · логово босса` : `Уровень ${plan.level} из ${C.LEVELS_PER_SEASON}`);
     const style = { fontFamily: C.FONT, fontStyle: 'bold', stroke: '#1a1020' };
-    const big = this.add.text(C.GAME_WIDTH / 2, 190, main, { ...style, fontSize: '54px', color: '#fff6dc', strokeThickness: 8 })
+    const big = this.add.text(this.scale.width / 2, 190, main, { ...style, fontSize: '54px', color: '#fff6dc', strokeThickness: 8 })
       .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.hud + 5).setAlpha(0).setScale(1.4);
-    const small = this.add.text(C.GAME_WIDTH / 2, 246, sub, { ...style, fontSize: '20px', color: '#ffd8a0', strokeThickness: 5 })
+    const small = this.add.text(this.scale.width / 2, 246, sub, { ...style, fontSize: '20px', color: '#ffd8a0', strokeThickness: 5 })
       .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.hud + 5).setAlpha(0);
     this.tweens.add({ targets: big, alpha: 1, scale: 1, duration: 420, ease: 'Back.Out' });
     this.tweens.add({ targets: small, alpha: 1, duration: 300, delay: 200 });
@@ -2209,10 +2263,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showPanel(title: string, body: string, action: string, onAction: () => void): void {
-    const cx = C.GAME_WIDTH / 2;
-    const cy = C.GAME_HEIGHT / 2;
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
     const style = { fontFamily: C.FONT, fontStyle: 'bold', stroke: '#1a1020', align: 'center' };
-    const dim = this.add.rectangle(cx, cy, C.GAME_WIDTH, C.GAME_HEIGHT, 0x140a20, 0.7).setScrollFactor(0).setDepth(C.DEPTH.modal).setAlpha(0);
+    const dim = this.add.rectangle(cx, cy, this.scale.width, this.scale.height, 0x140a20, 0.7).setScrollFactor(0).setDepth(C.DEPTH.modal).setAlpha(0);
     const head = this.add.text(cx, cy - 90, title, { ...style, fontSize: '48px', color: '#fff3c4', strokeThickness: 8 })
       .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.modal + 1).setScale(0.5);
     const text = this.add.text(cx, cy - 10, body, { ...style, fontSize: '19px', color: '#e8dccc', strokeThickness: 4, lineSpacing: 8 })

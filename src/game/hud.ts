@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, FONT, GAME_HEIGHT, GAME_WIDTH, LEVELS_PER_SEASON, ROLL_COST } from './constants';
+import { DEPTH, FONT, LEVELS_PER_SEASON, ROLL_COST } from './constants';
 import { ABILITIES, type RunState } from './upgrades';
 
 const BAR_X = 46;
@@ -25,8 +25,10 @@ export class Hud {
   private hpGhost = 1;
   private xpPulse = 0;
   private abilityCount = -1;
+  private scene: Phaser.Scene;
 
   constructor(scene: Phaser.Scene, biomeName: string, level: number) {
+    this.scene = scene;
     const text = (x: number, y: number, size: number, color = '#ffffff') =>
       scene.add
         .text(x, y, '', { fontFamily: FONT, fontSize: `${size}px`, fontStyle: 'bold', color, stroke: '#1a1020', strokeThickness: 4 })
@@ -39,9 +41,9 @@ export class Hud {
       .setScrollFactor(0)
       .setDepth(DEPTH.hud + 1);
     this.hpText = text(BAR_X + 8, 14, 13);
-    this.levelText = text(GAME_WIDTH - 16, 12, 18).setOrigin(1, 0);
+    this.levelText = text(0, 12, 18).setOrigin(1, 0);
     this.levelText.setText(`${biomeName} · ${level}/${LEVELS_PER_SEASON}`);
-    this.bossText = text(GAME_WIDTH / 2, 50, 18, '#ffe0a0').setOrigin(0.5, 0).setVisible(false);
+    this.bossText = text(0, 50, 18, '#ffe0a0').setOrigin(0.5, 0).setVisible(false);
     this.abilityText = text(16, 62, 18, '#fff6d0');
   }
 
@@ -52,7 +54,11 @@ export class Hud {
   update(info: HudInfo, dt: number): void {
     const { run } = info;
     const g = this.g;
+    // Размер экрана берём каждый кадр — окно могли растянуть.
+    const { width, height } = this.scene.scale;
     g.clear();
+    this.levelText.setX(width - 16);
+    this.bossText.setX(width / 2);
 
     // Здоровье с "призраком" потерянного урона.
     const hpFrac = Phaser.Math.Clamp(run.hp / run.maxHp, 0, 1);
@@ -74,27 +80,27 @@ export class Hud {
     // Опыт внизу.
     this.xpPulse = Math.max(0, this.xpPulse - dt * 3);
     const xpH = 8 + this.xpPulse * 4;
-    this.bar(16, GAME_HEIGHT - 14 - xpH / 2, GAME_WIDTH - 32, xpH, run.xp / Math.max(1, run.xpNeeded), 0x3fe0a8);
+    this.bar(16, height - 14 - xpH / 2, width - 32, xpH, run.xp / Math.max(1, run.xpNeeded), 0x3fe0a8);
 
     // Прогресс восхождения: путь к флагу.
-    const px = GAME_WIDTH - 196;
+    const px = width - 196;
     g.fillStyle(0x1a1020, 0.45).fillRoundedRect(px, 40, 180, 8, 4);
     g.fillStyle(0xffffff, 0.9).fillRoundedRect(px, 40, Math.max(8, 180 * info.progress), 8, 4);
     g.fillStyle(0xff5a4a, 1).fillTriangle(px + 180, 30, px + 194, 35, px + 180, 40);
     g.fillStyle(0x4a3a2a, 1).fillRect(px + 178, 30, 3, 20);
 
-    this.drawBoss(info);
+    this.drawBoss(info, width);
     this.drawAbilities(run);
   }
 
-  private drawBoss(info: HudInfo): void {
+  private drawBoss(info: HudInfo, screenW: number): void {
     if (!info.boss) {
       this.bossText.setVisible(false);
       return;
     }
     this.bossText.setVisible(true).setText(info.boss.name);
     const w = 440;
-    this.bar(GAME_WIDTH / 2 - w / 2, 76, w, 14, info.boss.hp / info.boss.maxHp, 0xffb03f);
+    this.bar(screenW / 2 - w / 2, 76, w, 14, info.boss.hp / info.boss.maxHp, 0xffb03f);
   }
 
   private drawAbilities(run: RunState): void {

@@ -9,6 +9,10 @@ export const GAME_HEIGHT = 640;
 
 /** Ширина скал по краям коридора. */
 export const SIDE_WALL = 70;
+/** Сколько скал дорисовывать за краями поля — для широких экранов (до ~21:9). */
+export const SIDE_EXTRA = 600;
+/** Шаг рядов дальних скал за краями поля. */
+export const OUTER_CLIFF_STEP = 110;
 export const LEVELS_PER_SEASON = 35;
 export const BOSS_EVERY = 7;
 export const LEVEL_MIN_LENGTH = 1800;

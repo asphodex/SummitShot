@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, FONT, GAME_HEIGHT, GAME_WIDTH } from './constants';
+import { DEPTH, FONT } from './constants';
 import { sfx } from './sfx';
 import type { Choice } from './upgrades';
 
@@ -24,19 +24,20 @@ export function showChoice<T extends string>(
     return o;
   };
 
-  const dim = keep(scene.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x140a20, 0.72));
+  const { width, height } = scene.scale;
+  const dim = keep(scene.add.rectangle(width / 2, height / 2, width, height, 0x140a20, 0.72));
   dim.setScrollFactor(0).setDepth(DEPTH.modal).setAlpha(0);
   scene.tweens.add({ targets: dim, alpha: 1, duration: 200 });
 
   const header = keep(
-    scene.add.text(GAME_WIDTH / 2, 92, title, {
+    scene.add.text(width / 2, 92, title, {
       fontFamily: FONT, fontSize: '34px', fontStyle: 'bold', color: '#fff3c4', stroke: '#1a1020', strokeThickness: 6,
     }),
   );
   header.setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH.modal + 2).setScale(0.6);
   scene.tweens.add({ targets: header, scale: 1, duration: 380, ease: 'Back.Out' });
 
-  const startX = GAME_WIDTH / 2 - (choices.length - 1) * (CARD_W + CARD_GAP) / 2;
+  const startX = width / 2 - (choices.length - 1) * (CARD_W + CARD_GAP) / 2;
   const cards = choices.map((choice, i) => buildCard(scene, choice, startX + i * (CARD_W + CARD_GAP), keep, i));
 
   let selected = -1;
@@ -97,7 +98,7 @@ function buildCard<T extends string>(
   keep: <O extends Phaser.GameObjects.GameObject>(o: O) => O,
   index: number,
 ): Card {
-  const y = GAME_HEIGHT / 2 + 30;
+  const y = scene.scale.height / 2 + 30;
   const bg = keep(scene.add.graphics());
   const draw = (hover: boolean) => {
     bg.clear();
