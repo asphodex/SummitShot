@@ -10,6 +10,7 @@ import {
   type Enemy,
   type EnemyWorld,
 } from './enemies';
+import { isDawn, nightness, phaseHint, phaseOf, phaseTitle, skyColor, strengthFor, type DayPhase } from './daycycle';
 import { Hud } from './hud';
 import { Tutorial } from './tutorial';
 import { BEAM_HALF_THICKNESS, generateLayout, type Arena, type Layout } from './level';
@@ -67,7 +68,7 @@ interface Orb {
   value: number; age: number; sprite: Img; shadow: Img;
 }
 
-interface Blast { x: number; y: number; r: number; timer: number; delay: number; ring: Img; fill: Img }
+interface Blast { x: number; y: number; r: number; timer: number; delay: number; ring: Img; fill: Img; power: number }
 
 interface Player {
   x: number; y: number; vx: number; vy: number;
@@ -150,6 +151,12 @@ export class GameScene extends Phaser.Scene {
   private aimLines!: Phaser.GameObjects.Graphics;
   /** Объекты меню паузы (null — пауза закрыта). */
   private pauseParts: Phaser.GameObjects.GameObject[] | null = null;
+  /** Смена суток: текущая фаза, заливка неба и подпись в HUD. */
+  private dayPhase: DayPhase = 'day';
+  private sky!: Phaser.GameObjects.Rectangle;
+  private phaseText!: Phaser.GameObjects.Text;
+  /** Враг, который сейчас "думает" — его выстрелы и взрывы получают его силу. */
+  private shooter: Enemy | null = null;
   /** Когда каждый враг в последний раз получил урон от орбиты / шипов (время уровня). */
   private orbitHitAt = new Map<Enemy, number>();
   private thornsHitAt = new Map<Enemy, number>();
@@ -231,8 +238,10 @@ export class GameScene extends Phaser.Scene {
     this.thornsHitAt.clear();
     this.bossStartTime = 0;
     this.heli = null;
+    this.bannerUntil = 0;
     this.tutorial = null;
     this.mouseShotQueued = false;
+    this.shooter = null;
     this.popPool = [];
     this.fpsText = null;
     this.popActive = 0;
@@ -305,12 +314,51 @@ export class GameScene extends Phaser.Scene {
 
     // Атмосфера: туман сверху, виньетка, красная вспышка урона.
     this.fog = this.add.image(0, 0, 'fog').setOrigin(0)
-      .setScrollFactor(0).setDepth(C.DEPTH.overlay).setTint(toColor(b.fog)).setAlpha(0.6);
+      .setScrollFactor(0).setDepth(C.DEPTH.overlay).setTint(toColor(b.fog)).setAlpha(C.FOG_ALPHA);
     this.vignette = this.add.image(0, 0, 'vignette').setOrigin(0)
       .setScrollFactor(0).setDepth(C.DEPTH.overlay + 1);
     this.hurtOverlay = this.add.image(0, 0, 'hurt').setOrigin(0)
       .setScrollFactor(0).setDepth(C.DEPTH.overlay + 2).setAlpha(0);
+    // Заливка умножается на картинку: к ночи всё темнеет и синеет, а не сереет.
+    this.sky = this.add.rectangle(0, 0, 10, 10, 0xffffff, 1).setOrigin(0)
+      // Выше тумана: ночью затемняется и он, иначе верх экрана выглядит засвеченным.
+      .setScrollFactor(0).setDepth(C.DEPTH.overlay + 0.5).setBlendMode(Phaser.BlendModes.MULTIPLY);
+    this.phaseText = this.add.text(0, 56, '', {
+      fontFamily: C.FONT, fontSize: '15px', fontStyle: 'bold', color: '#ffe8c0', stroke: '#1a1020', strokeThickness: 4,
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(C.DEPTH.hud + 1);
     this.fitOverlays();
+    this.updateDayCycle(true);
+  }
+
+  /**
+   * Смена суток по времени игры: экран темнеет, тёплые враги слабеют, ледяные крепнут.
+   * Часы — это run.stats.time: они идут только в активной игре, на паузе стоят.
+   */
+  private updateDayCycle(initial = false): void {
+    const night = this.plan.isTutorial ? 0 : nightness(this.run.stats.time);
+    this.sky.setFillStyle(skyColor(night), 1);
+    // Ночью туман редеет — светлая дымка в темноте выглядела бы засветом.
+    this.fog.setAlpha(C.FOG_ALPHA * (1 - night * 0.6));
+
+    const phase = phaseOf(night);
+    if (phase === this.dayPhase && !initial) return;
+    this.dayPhase = phase;
+    const dawn = isDawn(this.run.stats.time);
+    this.phaseText.setText(phaseHint(phase, dawn));
+    if (initial) return;
+    sfx.gateOpen();
+    const sub = phase === 'day' ? 'Враги снова в обычной силе' : 'Тёплые враги слабеют, ледяные — крепнут';
+    this.showPhaseToast(phaseTitle(phase, dawn), sub);
+  }
+
+  /** Сила врага в текущей фазе суток: <1 — ослаблен, >1 — усилен. */
+  private strengthOf(e: Enemy): number {
+    const temp = e.kind === 'boss' ? this.plan.biome.boss.temp : ENEMY_DEFS[e.kind].temp;
+    return strengthFor(temp, this.dayPhase);
+  }
+
+  private shooterStrength(): number {
+    return this.shooter ? this.strengthOf(this.shooter) : 1;
   }
 
   /** Камера по центру поля; на широком экране видно больше скал по бокам. */
@@ -320,11 +368,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private fitOverlays(): void {
-    const { width, height } = this.scale;
+    const width = viewWidth(this);
+    const height = viewHeight(this);
     this.fog.setDisplaySize(width, 170);
     this.vignette.setDisplaySize(width, height);
     this.hurtOverlay.setDisplaySize(width, height);
-    this.fpsText?.setPosition(width - 16, 60);
+    this.sky?.setSize(width, height);
+    this.phaseText?.setX(width - 16);
+    this.fpsText?.setPosition(width - 16, 82);
   }
 
   /** Окно изменило размер: подгоняем камеру и экранные слои. */
@@ -340,7 +391,7 @@ export class GameScene extends Phaser.Scene {
       this.fpsText = null;
       return;
     }
-    this.fpsText = this.add.text(viewWidth(this) - 16, 60, '', {
+    this.fpsText = this.add.text(viewWidth(this) - 16, 82, '', {
       fontFamily: 'monospace', fontSize: '14px', color: '#9cffd6', backgroundColor: '#1a1020', padding: { x: 6, y: 3 },
     }).setOrigin(1, 0).setScrollFactor(0).setDepth(C.DEPTH.modal + 5);
   }
@@ -695,6 +746,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.cullDecor();
+    this.updateDayCycle();
     this.updateFps();
     this.updateHurtOverlay(dt);
     this.hud.update({
@@ -1404,9 +1456,12 @@ export class GameScene extends Phaser.Scene {
       if (e.dead) continue;
 
       e.bumped = false;
+      const power = this.strengthOf(e);
+      this.shooter = e;
       thinkEnemy(e, this.world, dt * mul);
-      e.x += (e.vx * mul + e.kx) * dt;
-      e.y += (e.vy * mul + e.ky) * dt;
+      this.shooter = null;
+      e.x += (e.vx * mul * power + e.kx) * dt;
+      e.y += (e.vy * mul * power + e.ky) * dt;
       const damp = Math.max(0, 1 - dt * 10);
       e.kx *= damp;
       e.ky *= damp;
@@ -1418,7 +1473,7 @@ export class GameScene extends Phaser.Scene {
       const canBite = e.damage > 0 && e.hop < 8 && !isHidden(e);
       if (canBite && Math.abs(e.x - p.x) < reach && Math.abs(e.y - p.y) < reach && Math.hypot(e.x - p.x, e.y - p.y) < reach) {
         this.applyThorns(e);
-        this.hurtPlayer(e.damage, e.x, e.y);
+        this.hurtPlayer(e.damage * power, e.x, e.y);
       }
       this.syncEnemy(e, dt);
     }
@@ -1528,6 +1583,8 @@ export class GameScene extends Phaser.Scene {
     else if (windup) e.sprite.setTint(0xff5a4a).setTintMode(Phaser.TintModes.FILL);
     else if (e.slow > 0) e.sprite.setTint(0x9fe0ff).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (e.poison > 0) e.sprite.setTint(0xa8ff8a).setTintMode(Phaser.TintModes.MULTIPLY);
+    else if (this.strengthOf(e) > 1) e.sprite.setTint(0xa8dcff).setTintMode(Phaser.TintModes.MULTIPLY);
+    else if (this.strengthOf(e) < 1) e.sprite.setTint(0xb8b0c0).setTintMode(Phaser.TintModes.MULTIPLY);
     else e.sprite.setTint(0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
 
     const lift = (e.hop + fly) / 90;
@@ -1556,7 +1613,7 @@ export class GameScene extends Phaser.Scene {
     if (!e.awake && e.kind !== 'boss') this.wake(e);
     const isPoison = source === 'poison';
     const crit = source === 'arrow' && Math.random() < this.run.critChance;
-    const dmg = Math.max(1, Math.round(damage * (crit ? 2 : 1)));
+    const dmg = Math.max(1, Math.round((damage * (crit ? 2 : 1)) / this.strengthOf(e)));
     e.hp -= dmg;
     this.run.stats.damageDealt += dmg;
     if (crit) this.run.stats.crits += 1;
@@ -1644,7 +1701,7 @@ export class GameScene extends Phaser.Scene {
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       high,
-      damage: Math.round((high ? 14 : 10) * this.damageScale()),
+      damage: Math.round((high ? 14 : 10) * this.damageScale() * this.shooterStrength()),
       life: SHOT_LIFETIME,
       sprite, shadow, dodged: false,
     });
@@ -1711,7 +1768,7 @@ export class GameScene extends Phaser.Scene {
   private spawnBlast(x: number, y: number, r: number, delay: number): void {
     const fill = this.add.image(x, y, 'disc').setTint(0xff3f3f).setScale(0).setDepth(C.DEPTH.pool + 1);
     const ring = this.add.image(x, y, 'ring').setTint(0xff3f3f).setScale((r * 2) / 128).setDepth(C.DEPTH.pool + 1).setAlpha(0.8);
-    this.blasts.push({ x, y, r, timer: delay, delay, ring, fill });
+    this.blasts.push({ x, y, r, timer: delay, delay, ring, fill, power: this.shooterStrength() });
     sfx.telegraph();
   }
 
@@ -1729,7 +1786,7 @@ export class GameScene extends Phaser.Scene {
       this.chunks.explode(16, b.x, b.y);
       this.dust.explode(10, b.x, b.y);
       if (Math.hypot(p.x - b.x, p.y - b.y) < b.r + C.PLAYER_RADIUS) {
-        this.hurtPlayer(Math.round(20 * this.damageScale()), b.x, b.y);
+        this.hurtPlayer(Math.round(20 * this.damageScale() * b.power), b.x, b.y);
       }
     }
     this.blasts = this.blasts.filter((b) => {
@@ -2316,7 +2373,31 @@ export class GameScene extends Phaser.Scene {
     this.dust.explode(count, x, y);
   }
 
+  /** Пока висит баннер уровня или босса, плашка смены суток ждёт (время в мс сцены). */
+  private bannerUntil = 0;
+
+  /** Плашка смены фазы суток: ниже и мельче баннера уровня и не накладывается на него. */
+  private showPhaseToast(title: string, subtitle: string): void {
+    const wait = this.bannerUntil - this.time.now;
+    if (wait > 0) {
+      this.time.delayedCall(wait, () => this.showPhaseToast(title, subtitle));
+      return;
+    }
+    const style = { fontFamily: C.FONT, fontStyle: 'bold', stroke: '#1a1020', align: 'center' };
+    const cx = viewWidth(this) / 2;
+    const big = this.add.text(cx, C.PHASE_TOAST_Y, title, { ...style, fontSize: '32px', color: '#fff6dc', strokeThickness: 6 })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.hud + 4).setAlpha(0);
+    const small = this.add.text(cx, C.PHASE_TOAST_Y + 34, subtitle, { ...style, fontSize: '16px', color: '#ffd8a0', strokeThickness: 4 })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.hud + 4).setAlpha(0);
+    this.tweens.add({ targets: [big, small], alpha: 1, duration: 250 });
+    this.tweens.add({
+      targets: [big, small], alpha: 0, y: '-=14', delay: 2000, duration: 450,
+      onComplete: () => { big.destroy(); small.destroy(); },
+    });
+  }
+
   private showBanner(title?: string, subtitle?: string): void {
+    this.bannerUntil = this.time.now + C.BANNER_DURATION_MS;
     const plan = this.plan;
     const main = title ?? (plan.isTutorial ? 'Обучение' : plan.biome.name);
     const sub = subtitle ?? (plan.isTutorial ? 'Перед восхождением' : plan.isBoss ? `Уровень ${plan.level} · логово босса` : `Уровень ${plan.level} из ${C.LEVELS_PER_SEASON}`);

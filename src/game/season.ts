@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import type { Temperature } from './daycycle';
 import {
   BOSS_EVERY,
   BOSS_LEVEL_LENGTH,
@@ -43,7 +44,7 @@ export interface Biome {
   fog: string;
   ambient: AmbientKind;
   enemies: EnemyKind[];
-  boss: { name: string; color: string; colorDark: string; patterns: BossPattern[] };
+  boss: { name: string; color: string; colorDark: string; patterns: BossPattern[]; temp: Temperature };
 }
 
 export interface Season {
@@ -64,7 +65,7 @@ const ISLAND: Season = {
       treeShape: 'palm', pool: '#4cc3c9', poolLight: '#9be7e4', poolHurts: false,
       accent: '#ff8f8f', fog: '#bfeff2', ambient: 'motes',
       enemies: ['crab', 'spitter'],
-      boss: { name: 'Краб-отшельник', color: '#ff6f59', colorDark: '#b23a3a', patterns: ['burst', 'charge', 'summon'] },
+      boss: { name: 'Краб-отшельник', color: '#ff6f59', colorDark: '#b23a3a', patterns: ['burst', 'charge', 'summon'], temp: 'warm' },
     },
     {
       id: 'tropics', name: 'Тропики',
@@ -75,7 +76,7 @@ const ISLAND: Season = {
       treeShape: 'bush', pool: '#3aa6a0', poolLight: '#7fdcc4', poolHurts: false,
       accent: '#ff5fa2', fog: '#c8f0b0', ambient: 'leaves',
       enemies: ['bat', 'turtle'],
-      boss: { name: 'Хищная росянка', color: '#e0457b', colorDark: '#8a1f4f', patterns: ['spiral', 'fan', 'sweep', 'summon'] },
+      boss: { name: 'Хищная росянка', color: '#e0457b', colorDark: '#8a1f4f', patterns: ['spiral', 'fan', 'sweep', 'summon'], temp: 'warm' },
     },
     {
       id: 'alpine', name: 'Альпы',
@@ -86,7 +87,7 @@ const ISLAND: Season = {
       treeShape: 'pine', pool: '#a8d8f0', poolLight: '#e0f6ff', poolHurts: false,
       accent: '#7fb8ff', fog: '#f0f6ff', ambient: 'snow',
       enemies: ['charger', 'mole'],
-      boss: { name: 'Снежный як', color: '#f2f2f2', colorDark: '#7d8aa6', patterns: ['charge', 'sweep', 'meteor', 'burst'] },
+      boss: { name: 'Снежный як', color: '#f2f2f2', colorDark: '#7d8aa6', patterns: ['charge', 'sweep', 'meteor', 'burst'], temp: 'cold' },
     },
     {
       id: 'mesa', name: 'Меса',
@@ -97,7 +98,7 @@ const ISLAND: Season = {
       treeShape: 'cactus', pool: '#d9b06a', poolLight: '#f0d59a', poolHurts: false,
       accent: '#ffd25f', fog: '#ffe2bf', ambient: 'dust',
       enemies: ['shooter', 'bomber'],
-      boss: { name: 'Скорпион-матриарх', color: '#3a3248', colorDark: '#1c1726', patterns: ['fan', 'sweep', 'summon', 'charge'] },
+      boss: { name: 'Скорпион-матриарх', color: '#3a3248', colorDark: '#1c1726', patterns: ['fan', 'sweep', 'summon', 'charge'], temp: 'warm' },
     },
     {
       id: 'caldera', name: 'Кальдера',
@@ -108,7 +109,7 @@ const ISLAND: Season = {
       treeShape: 'spire', pool: '#ff5a1f', poolLight: '#ffcf4f', poolHurts: true,
       accent: '#ffb03f', fog: '#5a3a3a', ambient: 'embers',
       enemies: ['blob', 'turret'],
-      boss: { name: 'Лавовый монстр', color: '#ff6a2b', colorDark: '#7a1f1f', patterns: ['spiral', 'meteor', 'burst', 'sweep', 'fan', 'summon'] },
+      boss: { name: 'Лавовый монстр', color: '#ff6a2b', colorDark: '#7a1f1f', patterns: ['spiral', 'meteor', 'burst', 'sweep', 'fan', 'summon'], temp: 'warm' },
     },
   ],
 };

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { BOSS_PHASE2_AT } from './constants';
+import type { Temperature } from './daycycle';
 import type { BossPattern, EnemyKind } from './season';
 
 /** Класс врага — в каждом уровне стараемся смешать разные классы. */
@@ -22,26 +23,28 @@ export interface EnemyDef {
   damage: number;
   xp: number;
   flying: boolean;
+  /** Тёплые слабеют на закате и ночью, ледяные — крепнут (см. daycycle.ts). */
+  temp: Temperature;
 }
 
 export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
   // Биомные.
-  crab: { cls: 'melee', common: false, unlock: 1, pack: 1, hp: 22, speed: 125, radius: 15, damage: 12, xp: 4, flying: false },
-  spitter: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 30, speed: 0, radius: 16, damage: 12, xp: 5, flying: false },
-  bat: { cls: 'flyer', common: false, unlock: 1, pack: 1, hp: 14, speed: 150, radius: 13, damage: 10, xp: 4, flying: true },
-  turtle: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 70, speed: 55, radius: 19, damage: 16, xp: 9, flying: false },
-  charger: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 48, speed: 75, radius: 19, damage: 22, xp: 7, flying: false },
-  mole: { cls: 'special', common: false, unlock: 1, pack: 1, hp: 34, speed: 140, radius: 15, damage: 16, xp: 7, flying: false },
-  shooter: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 32, speed: 95, radius: 15, damage: 12, xp: 6, flying: false },
-  bomber: { cls: 'special', common: false, unlock: 1, pack: 2, hp: 16, speed: 150, radius: 13, damage: 0, xp: 5, flying: false },
-  blob: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 36, speed: 90, radius: 17, damage: 14, xp: 6, flying: false },
-  turret: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 40, speed: 0, radius: 16, damage: 10, xp: 6, flying: false },
+  crab: { cls: 'melee', common: false, unlock: 1, pack: 1, hp: 22, speed: 125, radius: 15, damage: 12, xp: 4, flying: false, temp: 'warm' },
+  spitter: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 30, speed: 0, radius: 16, damage: 12, xp: 5, flying: false, temp: 'warm' },
+  bat: { cls: 'flyer', common: false, unlock: 1, pack: 1, hp: 14, speed: 150, radius: 13, damage: 10, xp: 4, flying: true, temp: 'neutral' },
+  turtle: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 70, speed: 55, radius: 19, damage: 16, xp: 9, flying: false, temp: 'warm' },
+  charger: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 48, speed: 75, radius: 19, damage: 22, xp: 7, flying: false, temp: 'cold' },
+  mole: { cls: 'special', common: false, unlock: 1, pack: 1, hp: 34, speed: 140, radius: 15, damage: 16, xp: 7, flying: false, temp: 'cold' },
+  shooter: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 32, speed: 95, radius: 15, damage: 12, xp: 6, flying: false, temp: 'warm' },
+  bomber: { cls: 'special', common: false, unlock: 1, pack: 2, hp: 16, speed: 150, radius: 13, damage: 0, xp: 5, flying: false, temp: 'warm' },
+  blob: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 36, speed: 90, radius: 17, damage: 14, xp: 6, flying: false, temp: 'warm' },
+  turret: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 40, speed: 0, radius: 16, damage: 10, xp: 6, flying: false, temp: 'neutral' },
   // Учебная мишень: стоит на месте и не кусается. Ни в один микс не попадает.
-  dummy: { cls: 'special', common: false, unlock: 99, pack: 1, hp: 20, speed: 0, radius: 18, damage: 0, xp: 2, flying: false },
+  dummy: { cls: 'special', common: false, unlock: 99, pack: 1, hp: 20, speed: 0, radius: 18, damage: 0, xp: 2, flying: false, temp: 'neutral' },
   // Общие — открываются по ходу сезона и встречаются везде.
-  gnat: { cls: 'flyer', common: true, unlock: 2, pack: 4, hp: 7, speed: 175, radius: 9, damage: 6, xp: 1, flying: true },
-  healer: { cls: 'special', common: true, unlock: 9, pack: 1, hp: 26, speed: 85, radius: 14, damage: 8, xp: 8, flying: false },
-  sniper: { cls: 'ranged', common: true, unlock: 12, pack: 1, hp: 24, speed: 80, radius: 14, damage: 10, xp: 7, flying: false },
+  gnat: { cls: 'flyer', common: true, unlock: 2, pack: 4, hp: 7, speed: 175, radius: 9, damage: 6, xp: 1, flying: true, temp: 'warm' },
+  healer: { cls: 'special', common: true, unlock: 9, pack: 1, hp: 26, speed: 85, radius: 14, damage: 8, xp: 8, flying: false, temp: 'neutral' },
+  sniper: { cls: 'ranged', common: true, unlock: 12, pack: 1, hp: 24, speed: 80, radius: 14, damage: 10, xp: 7, flying: false, temp: 'neutral' },
 };
 
 export const ALL_ENEMY_KINDS = Object.keys(ENEMY_DEFS) as EnemyKind[];

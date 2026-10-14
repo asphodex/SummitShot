@@ -153,6 +153,26 @@ export const VAMPIRE_HEAL = 3;
 export const SHELTER_DAMAGE_MUL = 0.5;
 export const LIGHT_ROLL_COST_MUL = 0.6;
 
+// --- Смена суток (условия меняются от проведённого времени) ------------------------
+
+/** За сколько секунд игры день полностью сменяется ночью (и столько же — обратно). */
+export const DAY_CYCLE_SECONDS = 60;
+/** С какой "темноты" (0..1) начинается закат и ночь. */
+export const DUSK_FROM = 1 / 3;
+export const NIGHT_FROM = 2 / 3;
+/** На сколько тёплые враги слабеют, а ледяные крепнут: на закате и ночью. */
+export const DUSK_EFFECT = 0.2;
+export const NIGHT_EFFECT = 0.4;
+/** Цвета, на которые умножается картинка: в разгар заката и глубокой ночью. */
+export const SKY_DUSK = 0xffb48a;
+export const SKY_NIGHT = 0x5a68b0;
+/** Плотность тумана сверху экрана днём (к ночи он редеет). */
+export const FOG_ALPHA = 0.4;
+/** Где показывается плашка смены суток — ниже баннера уровня. */
+export const PHASE_TOAST_Y = 300;
+/** Сколько висит баннер уровня/босса (плашка смены суток ждёт его). */
+export const BANNER_DURATION_MS = 2300;
+
 export const SAVE_KEY = 'summit-shot-save-v1';
 /** Отметка, что обучение пройдено — второй раз его не показываем. */
 export const TUTORIAL_KEY = 'summit-shot-tutorial-done';
