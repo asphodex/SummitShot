@@ -10,8 +10,9 @@ import {
   type Enemy,
   type EnemyWorld,
 } from './enemies';
-import { isDawn, nightness, phaseHint, phaseOf, phaseTitle, skyColor, strengthFor, type DayPhase } from './daycycle';
+import { isDawn, nightness, phaseEffectText, phaseHint, phaseOf, phaseTitle, skyColor, strengthFor, type DayPhase } from './daycycle';
 import { Hud } from './hud';
+import { TUNING } from './tuning';
 import { Tutorial } from './tutorial';
 import { BEAM_HALF_THICKNESS, generateLayout, type Arena, type Layout } from './level';
 import { getSeason, planLevel, type EnemyKind, type LevelPlan } from './season';
@@ -257,12 +258,12 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Сколько опыта нужно до следующего усиления: весь опыт врагов этого уровня
-   * × LEVELS_PER_UPGRADE (≈ одно усиление на 1.15 уровня, если зачищать всё).
+   * × levelsPerUpgrade из конфига (≈ одно усиление на 1.15 уровня, если зачищать всё).
    */
   private computeXpNeeded(): number {
     const spawnXp = this.layout.spawns.reduce((sum, s) => sum + ENEMY_DEFS[s.kind].xp, 0);
     const perLevel = Math.max(25, spawnXp + (this.plan.isBoss ? 60 : 0));
-    return Math.round(perLevel * C.LEVELS_PER_UPGRADE);
+    return Math.round(perLevel * TUNING.progression.levelsPerUpgrade);
   }
 
   // ===========================================================================
@@ -354,7 +355,8 @@ export class GameScene extends Phaser.Scene {
     this.phaseText.setText(phaseHint(phase, dawn));
     if (initial) return;
     sfx.gateOpen();
-    const sub = phase === 'day' ? 'Враги снова в обычной силе' : 'Тёплые враги слабеют, ледяные — крепнут';
+    const effect = phaseEffectText(phase);
+    const sub = effect ? `Враги: ${effect}` : 'Враги в обычной силе';
     this.showPhaseToast(phaseTitle(phase, dawn), sub);
   }
 
@@ -577,7 +579,7 @@ export class GameScene extends Phaser.Scene {
     const b = this.plan.biome;
     // Босс подчиняется тому же правилу роста HP, что и обычные враги; финальный — крупнее.
     const final = this.isFinalLevel();
-    const hp = Math.round(C.BOSS_BASE_HP * enemyHpMultiplier(this.run) * (final ? C.FINAL_BOSS_HP_MUL : 1) * this.bossHpBoost());
+    const hp = Math.round(TUNING.enemies.bossBaseHp * enemyHpMultiplier(this.run) * (final ? TUNING.enemies.finalBossHpMul : 1) * this.bossHpBoost());
     const e = this.createEnemy(b.enemies[0], arena.bossX, arena.bossY);
     e.kind = 'boss';
     e.state = 'idle';
@@ -602,7 +604,7 @@ export class GameScene extends Phaser.Scene {
     const bosses = Math.floor(C.LEVELS_PER_SEASON / C.BOSS_EVERY);
     const index = Math.floor(this.plan.level / C.BOSS_EVERY) - 1;
     const t = bosses > 1 ? Phaser.Math.Clamp(index / (bosses - 1), 0, 1) : 1;
-    return Phaser.Math.Linear(C.BOSS_HP_BOOST_FIRST, C.BOSS_HP_BOOST_LAST, t);
+    return Phaser.Math.Linear(TUNING.enemies.bossHpBoostFirst, TUNING.enemies.bossHpBoostLast, t);
   }
 
   private startTutorial(): void {

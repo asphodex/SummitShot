@@ -1,20 +1,15 @@
 import Phaser from 'phaser';
 import {
-  BURST_UNLOCK_LEVELS,
-  ENEMY_HP_PER_LEVEL,
-  ENEMY_HP_PER_SEASON,
-  ENEMY_HP_TRACKING,
   MAX_BURST,
   MAX_ORBIT,
   PLAYER_BASE_HP,
   PLAYER_BASE_STAMINA,
   RING_POWER,
-  RING_UNLOCK_LEVEL,
   SAVE_KEY,
   SPREAD_POWER,
-  SPREAD_UNLOCK_LEVEL,
   TUTORIAL_KEY,
 } from './constants';
+import { TUNING } from './tuning';
 
 export type UpgradeId =
   | 'burst' | 'spread' | 'ring' | 'speed' | 'health' | 'stamina' | 'damage' | 'firerate'
@@ -150,9 +145,10 @@ export function offensePower(run: RunState): number {
  * чем часть реального роста атаки героя — прогресс чувствуется всегда.
  */
 export function enemyHpMultiplier(run: RunState): number {
-  const byLevel = 1 + (run.level - 1) * ENEMY_HP_PER_LEVEL;
-  const byPower = 1 + (offensePower(run) - 1) * ENEMY_HP_TRACKING;
-  return Math.min(byLevel, byPower) * (1 + run.season * ENEMY_HP_PER_SEASON);
+  const { hpPerLevel, hpTracking, hpPerSeason } = TUNING.enemies;
+  const byLevel = 1 + (run.level - 1) * hpPerLevel;
+  const byPower = 1 + (offensePower(run) - 1) * hpTracking;
+  return Math.min(byLevel, byPower) * (1 + run.season * hpPerSeason);
 }
 
 export interface Choice<T extends string> {
@@ -173,19 +169,19 @@ export const UPGRADES: Choice<UpgradeId>[] = [
   {
     id: 'burst', icon: '⇈', title: 'Очередь', color: 0xff8a4f,
     desc: '+1 стрела подряд вперёд (до 3)',
-    canTake: (r) => r.burst < MAX_BURST && r.level >= BURST_UNLOCK_LEVELS[r.burst - 1],
+    canTake: (r) => r.burst < MAX_BURST && r.level >= TUNING.progression.burstUnlockLevels[r.burst - 1],
     apply: (r) => { r.burst += 1; },
   },
   {
     id: 'spread', icon: '⋎', title: 'Веер \\|/', color: 0xffc94f,
     desc: 'Каждый выстрел — три стрелы веером',
-    canTake: (r) => !r.spread && r.level >= SPREAD_UNLOCK_LEVEL,
+    canTake: (r) => !r.spread && r.level >= TUNING.progression.spreadUnlockLevel,
     apply: (r) => { r.spread = true; },
   },
   {
     id: 'ring', icon: '✺', title: 'Кольцо', color: 0xff5f8a,
     desc: 'Каждый третий залп — стрелы по кругу',
-    canTake: (r) => !r.ring && r.level >= RING_UNLOCK_LEVEL,
+    canTake: (r) => !r.ring && r.level >= TUNING.progression.ringUnlockLevel,
     apply: (r) => { r.ring = true; },
   },
   {

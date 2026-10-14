@@ -79,7 +79,10 @@ export const BOW_TURN_SPEED = 22;
 export const BOW_KICK_BACK = 9;
 /** Сколько секунд после выстрела стрела выглядит вытянутой (эффект скорости). */
 export const ARROW_STRETCH_TIME = 0.12;
-/** С какого уровня можно получить 2-ю и 3-ю стрелу очереди. */
+/**
+ * С какого уровня можно получить 2-ю и 3-ю стрелу очереди, веер и стрелы по кругу.
+ * По умолчанию; перекрываются public/config.json (секция progression).
+ */
 export const BURST_UNLOCK_LEVELS = [3, 9];
 export const SPREAD_UNLOCK_LEVEL = 6;
 export const RING_UNLOCK_LEVEL = 12;
@@ -108,10 +111,11 @@ export const ADRENALINE_STAMINA = 15;
 
 export const XP_MAGNET_RADIUS = 140;
 export const XP_PICKUP_RADIUS = 24;
-/** В среднем одно усиление на столько уровней (если убивать всех). */
+/** В среднем одно усиление на столько уровней (если убивать всех). По умолчанию; перекрывается public/config.json. */
 export const LEVELS_PER_UPGRADE = 1.15;
 
 // --- Рост силы врагов ---------------------------------------------------------
+// HP врагов и боссов — значения по умолчанию; перекрываются public/config.json (секция enemies).
 
 /** HP врагов растёт на столько за каждый пройденный уровень сезона... */
 export const ENEMY_HP_PER_LEVEL = 0.12;
@@ -155,14 +159,23 @@ export const LIGHT_ROLL_COST_MUL = 0.6;
 
 // --- Смена суток (условия меняются по мере подъёма в гору) -------------------------
 
+/**
+ * Значения по умолчанию: игра берёт их из public/config.json (секция dayCycle),
+ * а эти — если файла нет или значение в нём некорректно.
+ */
 /** Сколько пикселей подъёма нужно, чтобы день полностью сменился ночью (и столько же — обратно). Уровень — 1800..4400. */
 export const CLIMB_PER_PHASE = 4000;
 /** С какой "темноты" (0..1) начинается закат и ночь. */
 export const DUSK_FROM = 1 / 3;
 export const NIGHT_FROM = 2 / 3;
-/** На сколько тёплые враги слабеют, а ледяные крепнут: на закате и ночью. */
-export const DUSK_EFFECT = 0.2;
-export const NIGHT_EFFECT = 0.4;
+/** Множитель силы тёплых и ледяных врагов в каждой фазе: <1 — слабее, >1 — сильнее. */
+export const PHASE_STRENGTH = {
+  day: { warm: 1, cold: 1 },
+  dusk: { warm: 0.8, cold: 1.2 },
+  night: { warm: 0.6, cold: 1.4 },
+};
+/** Файл настроек рядом с index.html — его можно править без пересборки. */
+export const CONFIG_URL = './config.json';
 /** Цвета, на которые умножается картинка: в разгар заката и глубокой ночью. */
 export const SKY_DUSK = 0xffb48a;
 export const SKY_NIGHT = 0x5a68b0;

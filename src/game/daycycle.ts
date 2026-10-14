@@ -1,18 +1,12 @@
 import Phaser from 'phaser';
-import {
-  CLIMB_PER_PHASE,
-  DUSK_EFFECT,
-  DUSK_FROM,
-  NIGHT_EFFECT,
-  NIGHT_FROM,
-  SKY_DUSK,
-  SKY_NIGHT,
-} from './constants';
+import { SKY_DUSK, SKY_NIGHT } from './constants';
+import { TUNING } from './tuning';
 
 /**
  * Смена суток: условия меняются по мере подъёма в гору.
- * За CLIMB_PER_PHASE пикселей подъёма день полностью сменяется ночью, ещё за столько же — обратно.
+ * За climbPerPhase пикселей подъёма день полностью сменяется ночью, ещё за столько же — обратно.
  * Учитывается только самая высокая точка уровня, так что отступлением день не вернуть.
+ * Длина и границы фаз, сила врагов по фазам — в public/config.json (см. tuning.ts).
  */
 
 export type DayPhase = 'day' | 'dusk' | 'night';
@@ -20,31 +14,21 @@ export type DayPhase = 'day' | 'dusk' | 'night';
 /** Тёплые ("летние") враги слабеют к ночи, ледяные — крепнут. */
 export type Temperature = 'warm' | 'cold' | 'neutral';
 
-/** 0 — полдень, 1 — глубокая ночь. Треугольная волна: к ночи за CLIMB_PER_PHASE и обратно за столько же. */
+/** 0 — полдень, 1 — глубокая ночь. Треугольная волна: к ночи за climbPerPhase и обратно за столько же. */
 export function nightness(climb: number): number {
-  const t = (climb / CLIMB_PER_PHASE) % 2;
+  const t = (climb / TUNING.dayCycle.climbPerPhase) % 2;
   return t < 1 ? t : 2 - t;
 }
 
 export function phaseOf(night: number): DayPhase {
-  if (night >= NIGHT_FROM) return 'night';
-  if (night >= DUSK_FROM) return 'dusk';
+  if (night >= TUNING.dayCycle.nightFrom) return 'night';
+  if (night >= TUNING.dayCycle.duskFrom) return 'dusk';
   return 'day';
-}
-
-/** На сколько сильнее/слабее становятся враги в этой фазе (0.2 = 20%). */
-export function phaseEffect(phase: DayPhase): number {
-  if (phase === 'night') return NIGHT_EFFECT;
-  if (phase === 'dusk') return DUSK_EFFECT;
-  return 0;
 }
 
 /** Множитель силы врага: <1 — ослаблен, >1 — усилен. */
 export function strengthFor(temp: Temperature, phase: DayPhase): number {
-  const effect = phaseEffect(phase);
-  if (temp === 'warm') return 1 - effect;
-  if (temp === 'cold') return 1 + effect;
-  return 1;
+  return temp === 'neutral' ? 1 : TUNING.dayCycle.phases[phase][temp];
 }
 
 export const PHASE_TITLE: Record<DayPhase, string> = {
@@ -55,18 +39,30 @@ export const PHASE_TITLE: Record<DayPhase, string> = {
 
 /** Ночь уже отступает — средняя фаза на обратном пути называется "Рассвет". */
 export function isDawn(climb: number): boolean {
-  return (climb / CLIMB_PER_PHASE) % 2 >= 1;
+  return (climb / TUNING.dayCycle.climbPerPhase) % 2 >= 1;
 }
 
 export function phaseTitle(phase: DayPhase, dawn: boolean): string {
   return phase === 'dusk' && dawn ? '◑ Рассвет' : PHASE_TITLE[phase];
 }
 
-/** Подпись для HUD: что сейчас происходит с врагами. */
+function percent(mul: number): string {
+  const pct = Math.round((mul - 1) * 100);
+  return pct >= 0 ? `+${pct}%` : `−${-pct}%`;
+}
+
+/** Что фаза делает с врагами, например "тёплые −20% · ледяные +20%"; пусто, если ничего. */
+export function phaseEffectText(phase: DayPhase): string {
+  const { warm, cold } = TUNING.dayCycle.phases[phase];
+  if (warm === 1 && cold === 1) return '';
+  return `тёплые ${percent(warm)} · ледяные ${percent(cold)}`;
+}
+
+/** Подпись для HUD: название фазы и что сейчас происходит с врагами. */
 export function phaseHint(phase: DayPhase, dawn: boolean): string {
-  const pct = Math.round(phaseEffect(phase) * 100);
   const title = phaseTitle(phase, dawn);
-  return phase === 'day' ? title : `${title} · тёплые −${pct}% · ледяные +${pct}%`;
+  const effect = phaseEffectText(phase);
+  return effect ? `${title} · ${effect}` : title;
 }
 
 /**

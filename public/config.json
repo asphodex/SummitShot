@@ -1,0 +1,27 @@
+{
+  "dayCycle": {
+    "climbPerPhase": 4000,
+    "duskFrom": 0.333,
+    "nightFrom": 0.667,
+    "phases": {
+      "day": { "warm": 1, "cold": 1 },
+      "dusk": { "warm": 0.8, "cold": 1.2 },
+      "night": { "warm": 0.6, "cold": 1.4 }
+    }
+  },
+  "enemies": {
+    "hpPerLevel": 0.12,
+    "hpTracking": 0.6,
+    "hpPerSeason": 0.3,
+    "bossBaseHp": 600,
+    "bossHpBoostFirst": 3,
+    "bossHpBoostLast": 5,
+    "finalBossHpMul": 1.6
+  },
+  "progression": {
+    "levelsPerUpgrade": 1.15,
+    "burstUnlockLevels": [3, 9],
+    "spreadUnlockLevel": 6,
+    "ringUnlockLevel": 12
+  }
+}

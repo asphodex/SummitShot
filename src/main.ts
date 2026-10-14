@@ -1,4 +1,6 @@
 import './style.css';
 import { createGame } from './game/config';
+import { loadTuning } from './game/tuning';
 
-createGame('game');
+// Сначала читаем настройки баланса из public/config.json, затем запускаем игру.
+void loadTuning().then(() => createGame('game'));
