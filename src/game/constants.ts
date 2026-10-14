@@ -134,6 +134,9 @@ export const BOSS_SHAKE_MUL = 0.1;
 export const BOSS_BASE_HP = 600;
 /** Лавовый монстр на вершине вулкана (уровень 35) — крепче обычного босса. */
 export const FINAL_BOSS_HP_MUL = 1.6;
+/** Дополнительный множитель HP боссов: у первого босса и у последнего (между ними — плавно). */
+export const BOSS_HP_BOOST_FIRST = 3;
+export const BOSS_HP_BOOST_LAST = 5;
 export const BOSS_PHASE2_AT = 0.5;
 export const ENEMY_SHOT_RADIUS = 9;
 export const HIGH_SHOT_HEIGHT = 26;

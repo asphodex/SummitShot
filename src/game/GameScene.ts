@@ -503,7 +503,7 @@ export class GameScene extends Phaser.Scene {
     const b = this.plan.biome;
     // Босс подчиняется тому же правилу роста HP, что и обычные враги; финальный — крупнее.
     const final = this.isFinalLevel();
-    const hp = Math.round(C.BOSS_BASE_HP * enemyHpMultiplier(this.run) * (final ? C.FINAL_BOSS_HP_MUL : 1));
+    const hp = Math.round(C.BOSS_BASE_HP * enemyHpMultiplier(this.run) * (final ? C.FINAL_BOSS_HP_MUL : 1) * this.bossHpBoost());
     const e = this.createEnemy(b.enemies[0], arena.bossX, arena.bossY);
     e.kind = 'boss';
     e.state = 'idle';
@@ -521,6 +521,14 @@ export class GameScene extends Phaser.Scene {
       cooldown: 1.5, step: 0, stepTimer: 0, spin: 0, phase2: false, minion: b.enemies[0],
     };
     return e;
+  }
+
+  /** Усиление HP босса: ×3 у первого босса и до ×5 у последнего (линейно по номеру босса). */
+  private bossHpBoost(): number {
+    const bosses = Math.floor(C.LEVELS_PER_SEASON / C.BOSS_EVERY);
+    const index = Math.floor(this.plan.level / C.BOSS_EVERY) - 1;
+    const t = bosses > 1 ? Phaser.Math.Clamp(index / (bosses - 1), 0, 1) : 1;
+    return Phaser.Math.Linear(C.BOSS_HP_BOOST_FIRST, C.BOSS_HP_BOOST_LAST, t);
   }
 
   private damageScale(): number {
