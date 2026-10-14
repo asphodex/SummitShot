@@ -81,7 +81,7 @@ export const BOW_KICK_BACK = 9;
 export const ARROW_STRETCH_TIME = 0.12;
 /**
  * С какого уровня можно получить 2-ю и 3-ю стрелу очереди, веер и стрелы по кругу.
- * По умолчанию; перекрываются public/config.json (секция progression).
+ * По умолчанию; перекрываются public/config.jsonc (секция progression).
  */
 export const BURST_UNLOCK_LEVELS = [3, 9];
 export const SPREAD_UNLOCK_LEVEL = 6;
@@ -111,11 +111,11 @@ export const ADRENALINE_STAMINA = 15;
 
 export const XP_MAGNET_RADIUS = 140;
 export const XP_PICKUP_RADIUS = 24;
-/** В среднем одно усиление на столько уровней (если убивать всех). По умолчанию; перекрывается public/config.json. */
+/** В среднем одно усиление на столько уровней (если убивать всех). По умолчанию; перекрывается public/config.jsonc. */
 export const LEVELS_PER_UPGRADE = 1.15;
 
 // --- Рост силы врагов ---------------------------------------------------------
-// HP врагов и боссов — значения по умолчанию; перекрываются public/config.json (секция enemies).
+// HP врагов и боссов — значения по умолчанию; перекрываются public/config.jsonc (секция enemies).
 
 /** HP врагов растёт на столько за каждый пройденный уровень сезона... */
 export const ENEMY_HP_PER_LEVEL = 0.12;
@@ -160,7 +160,7 @@ export const LIGHT_ROLL_COST_MUL = 0.6;
 // --- Смена суток (условия меняются по мере подъёма в гору) -------------------------
 
 /**
- * Значения по умолчанию: игра берёт их из public/config.json (секция dayCycle),
+ * Значения по умолчанию: игра берёт их из public/config.jsonc (секция dayCycle),
  * а эти — если файла нет или значение в нём некорректно.
  */
 /** Сколько пикселей подъёма нужно, чтобы день полностью сменился ночью (и столько же — обратно). Уровень — 1800..4400. */
@@ -175,7 +175,7 @@ export const PHASE_STRENGTH = {
   night: { warm: 0.6, cold: 1.4 },
 };
 /** Файл настроек рядом с index.html — его можно править без пересборки. */
-export const CONFIG_URL = './config.json';
+export const CONFIG_URL = './config.jsonc';
 /** Цвета, на которые умножается картинка: в разгар заката и глубокой ночью. */
 export const SKY_DUSK = 0xffb48a;
 export const SKY_NIGHT = 0x5a68b0;

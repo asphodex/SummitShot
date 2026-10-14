@@ -1,7 +1,7 @@
 import * as C from './constants';
 
 /**
- * Настройки баланса, которые можно менять без пересборки — в public/config.json.
+ * Настройки баланса, которые можно менять без пересборки — в public/config.jsonc.
  * По умолчанию берутся из constants.ts; при старте игры перекрываются значениями из файла.
  * Некорректные или отсутствующие в файле значения остаются по умолчанию.
  */
@@ -66,12 +66,35 @@ function merge(target: Record<string, unknown>, raw: unknown): void {
   }
 }
 
-/** Читает public/config.json. Без файла или с битым JSON игра идёт со значениями по умолчанию. */
+/** Убирает комментарии // до конца строки; внутри строк "..." ничего не трогает. */
+function stripComments(text: string): string {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (ch === '\\') out += text[++i] ?? '';
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else if (ch === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** Читает public/config.jsonc. Без файла или с битым JSON игра идёт со значениями по умолчанию. */
 export async function loadTuning(): Promise<void> {
   try {
     const res = await fetch(C.CONFIG_URL, { cache: 'no-store' });
     if (!res.ok) return;
-    merge(TUNING as unknown as Record<string, unknown>, await res.json());
+    merge(TUNING as unknown as Record<string, unknown>, JSON.parse(stripComments(await res.text())));
   } catch {
     // ignore — значения по умолчанию
   }
