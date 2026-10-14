@@ -204,16 +204,32 @@ export const GAME_TITLE = 'SUMMIT SHOT';
 
 // --- Сенсорное управление (телефоны и планшеты) ------------------------------------
 
-/** Радиус основания джойстика и ручки (в логических пикселях, при размере 1). */
-export const JOYSTICK_RADIUS = 58;
-export const JOYSTICK_KNOB_RADIUS = 24;
+/**
+ * На телефоне мир показывается крупнее: зум = WORLD_ZOOM_REF_SIDE / короткая сторона экрана (в CSS-пикселях),
+ * но не больше MAX_WORLD_ZOOM. iPhone 12 (390) — ≈1.55; планшеты (768+) — без зума.
+ */
+export const WORLD_ZOOM_REF_SIDE = 600;
+export const MAX_WORLD_ZOOM = 1.6;
+/** На телефоне герой выше на экране (доля высоты), чтобы его не закрывал джойстик внизу. */
+export const TOUCH_CAMERA_ANCHOR = 0.5;
+/** ...поэтому камера может опуститься ниже края уровня; там дорисованы земля и скалы на столько пикселей. */
+export const TOUCH_WORLD_BOTTOM_PAD = 700;
+
+/**
+ * Радиус основания джойстика и ручки — в CSS-пикселях экрана (при размере 1),
+ * чтобы под пальцем они были одного размера на любом телефоне и при любом повороте.
+ */
+export const JOYSTICK_RADIUS = 56;
+export const JOYSTICK_KNOB_RADIUS = 23;
 /** Палец, коснувшийся экрана в пределах radius × это число от центра, берёт джойстик. */
 export const JOYSTICK_GRAB_MUL = 1.8;
 /** Мёртвая зона джойстика: малые отклонения не двигают героя (доля радиуса). */
 export const JOYSTICK_DEAD_ZONE = 0.15;
-/** Радиус кнопок рывка и приседа при размере 1. */
+/** Радиус кнопок рывка, приседа и паузы — тоже в CSS-пикселях. */
 export const TOUCH_BUTTON_RADIUS = 40;
-export const TOUCH_PAUSE_RADIUS = 22;
+export const TOUCH_PAUSE_RADIUS = 20;
+/** Размер подписей на кнопках (CSS-пиксели). */
+export const TOUCH_LABEL_SIZE = 13;
 /** Пределы размера элементов в настройках и шаг кнопок −/+. */
 export const TOUCH_SIZE_MIN = 0.6;
 export const TOUCH_SIZE_MAX = 1.8;

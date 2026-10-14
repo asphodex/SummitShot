@@ -40,7 +40,7 @@ import {
   type AbilityId,
   type RunState,
 } from './upgrades';
-import { RENDER_SCALE, setupView, viewHeight, viewWidth } from './view';
+import { RENDER_SCALE, setupView, viewHeight, viewWidth, WORLD_ZOOM } from './view';
 
 type Mode = 'play' | 'choice' | 'exit' | 'dead' | 'pause' | 'ending';
 type KeyName = 'up' | 'down' | 'left' | 'right' | 'up2' | 'down2' | 'left2' | 'right2' | 'fire' | 'roll' | 'crouch' | 'crouch2';
@@ -150,6 +150,11 @@ export class GameScene extends Phaser.Scene {
   private tutorial: Tutorial | null = null;
   /** Сенсорное управление (только на телефонах и планшетах): джойстик, рывок, присед, автострельба. */
   private touch: TouchControls | null = null;
+  /**
+   * Камера интерфейса — только на телефоне: мир там увеличен (WORLD_ZOOM), а интерфейс
+   * (всё со scrollFactor 0) остаётся в прежнем масштабе, чтобы меню и баннеры помещались на экран.
+   */
+  private uiCam: Phaser.Cameras.Scene2D.Camera | null = null;
   private levelTime = 0;
   /** Самая высокая точка, до которой игрок поднялся на этом уровне (в пикселях от старта). */
   private levelClimb = 0;
@@ -189,6 +194,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     setupView(this);
+    this.setupWorldZoom();
     this.resetState();
     const run = this.run;
     this.plan = planLevel(run.season, run.level, run.seed);
@@ -214,8 +220,9 @@ export class GameScene extends Phaser.Scene {
     this.hud = new Hud(this, this.plan.biome.name, run.level);
     if (this.plan.isTutorial) this.startTutorial();
 
-    cam.scrollY = this.plan.length - viewHeight(this);
+    cam.scrollY = this.plan.length - this.worldViewH() + this.cameraDrop();
     cam.fadeIn(450, 20, 10, 30);
+    this.uiCam?.fadeIn(450, 20, 10, 30);
     this.showBanner();
   }
 
@@ -278,7 +285,9 @@ export class GameScene extends Phaser.Scene {
     const b = this.plan.biome;
     const L = this.plan.length;
 
-    this.add.tileSprite(-C.SIDE_EXTRA, 0, C.GAME_WIDTH + C.SIDE_EXTRA * 2, L, biomeKey(b, 'ground'))
+    // На телефоне земля продолжается ниже края уровня — туда может заглянуть камера (см. cameraDrop).
+    const groundH = L + (isTouchDevice() ? C.TOUCH_WORLD_BOTTOM_PAD : 0);
+    this.add.tileSprite(-C.SIDE_EXTRA, 0, C.GAME_WIDTH + C.SIDE_EXTRA * 2, groundH, biomeKey(b, 'ground'))
       .setOrigin(0).setDepth(C.DEPTH.ground).setTileScale(1 / RENDER_SCALE);
 
     for (const d of this.layout.decals) {
@@ -381,7 +390,50 @@ export class GameScene extends Phaser.Scene {
   /** Камера по центру поля; на широком экране видно больше скал по бокам. */
   private fitCamera(): void {
     // Без setBounds: при зуме камеры Phaser считает границы от центра, а у нас начало координат в углу.
-    this.cameras.main.scrollX = (C.GAME_WIDTH - viewWidth(this)) / 2;
+    this.cameras.main.scrollX = this.cameraTargetX();
+  }
+
+  /** Поле уже экрана (телефон с зумом) — камера идёт за героем по горизонтали, иначе стоит по центру. */
+  private cameraTargetX(): number {
+    const w = this.worldViewW();
+    if (w >= C.GAME_WIDTH || !this.player) return (C.GAME_WIDTH - w) / 2;
+    return Phaser.Math.Clamp(this.player.x - w / 2, 0, C.GAME_WIDTH - w);
+  }
+
+  /**
+   * На телефоне камера может опуститься ниже края уровня: тогда герой на старте
+   * (plan.length - 130) стоит на высоте TOUCH_CAMERA_ANCHOR, а не внизу под джойстиком.
+   */
+  private cameraDrop(): number {
+    if (!this.touch) return 0;
+    return Phaser.Math.Clamp(this.worldViewH() * (1 - C.TOUCH_CAMERA_ANCHOR) - 130, 0, C.TOUCH_WORLD_BOTTOM_PAD);
+  }
+
+  /** Видимая часть мира (на телефоне меньше экрана интерфейса в WORLD_ZOOM раз). */
+  private worldViewW(): number {
+    return viewWidth(this) / WORLD_ZOOM;
+  }
+
+  private worldViewH(): number {
+    return viewHeight(this) / WORLD_ZOOM;
+  }
+
+  private setupWorldZoom(): void {
+    this.uiCam = null;
+    if (WORLD_ZOOM === 1) return;
+    this.cameras.main.setZoom(RENDER_SCALE * WORLD_ZOOM);
+    this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height, false, 'ui').setOrigin(0, 0).setZoom(RENDER_SCALE);
+  }
+
+  /** Каждый объект рисует одна камера: интерфейс (scrollFactor 0) — камера интерфейса, остальное — мир. */
+  private assignCameras(): void {
+    const ui = this.uiCam;
+    if (!ui) return;
+    const worldId = this.cameras.main.id;
+    for (const obj of this.children.list) {
+      const screenSpace = (obj as Partial<Phaser.GameObjects.Components.ScrollFactor>).scrollFactorX === 0;
+      obj.cameraFilter = screenSpace ? worldId : ui.id;
+    }
   }
 
   private fitOverlays(): void {
@@ -397,6 +449,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Окно изменило размер: подгоняем камеру и экранные слои. */
   private onResize(): void {
+    this.uiCam?.setSize(this.scale.width, this.scale.height);
     this.fitCamera();
     this.fitOverlays();
     this.lastCullY = Number.NaN;
@@ -428,7 +481,7 @@ export class GameScene extends Phaser.Scene {
 
   private isOnScreen(y: number): boolean {
     const top = this.cameras.main.scrollY - C.CULL_MARGIN;
-    return y > top && y < top + viewHeight(this) + C.CULL_MARGIN * 2;
+    return y > top && y < top + this.worldViewH() + C.CULL_MARGIN * 2;
   }
 
   /**
@@ -461,6 +514,32 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.buildOuterCliffs(rng);
+    if (isTouchDevice()) this.buildBottomCliffs();
+  }
+
+  /**
+   * Скалы ниже края уровня — только на телефоне, куда опускается камера.
+   * Свой генератор случайных чисел: раскладка самого уровня не меняется.
+   */
+  private buildBottomCliffs(): void {
+    const b = this.plan.biome;
+    const L = this.plan.length;
+    const pad = C.TOUCH_WORLD_BOTTOM_PAD;
+    const rng = new Phaser.Math.RandomDataGenerator([`${this.run.seed}:bottom`]);
+    const dark = toColor(b.cliffDark);
+    this.add.rectangle(-C.SIDE_EXTRA, L, C.SIDE_EXTRA + C.SIDE_WALL, pad, dark).setOrigin(0).setDepth(C.DEPTH.decal);
+    this.add.rectangle(C.GAME_WIDTH - C.SIDE_WALL, L, C.SIDE_EXTRA + C.SIDE_WALL, pad, dark).setOrigin(0).setDepth(C.DEPTH.decal);
+    for (let y = L + 80; y < L + pad; y += 62) {
+      for (const side of [0, 1]) {
+        const x = side === 0 ? rng.between(-20, 20) : C.GAME_WIDTH - rng.between(-20, 20);
+        const yy = y + rng.between(-14, 14);
+        this.keepDecor(this.add.image(x, yy, biomeKey(b, 'cliff'))
+          .setOrigin(0.5, 0.7)
+          .setScale(rng.realInRange(0.8, 1.1))
+          .setFlipX(side === 1)
+          .setDepth(C.DEPTH.world + yy + 40), yy);
+      }
+    }
   }
 
   /**
@@ -766,6 +845,7 @@ export class GameScene extends Phaser.Scene {
     this.cullDecor();
     this.updateDayCycle();
     this.updateFps();
+    this.assignCameras();
     this.updateHurtOverlay(dt);
     this.touch?.setActive(this.mode === 'play');
     this.touch?.update(dt);
@@ -1076,11 +1156,17 @@ export class GameScene extends Phaser.Scene {
 
   private updateCamera(dt: number): void {
     const cam = this.cameras.main;
+    cam.scrollX += (this.cameraTargetX() - cam.scrollX) * Math.min(1, dt * 8);
+    const viewH = this.worldViewH();
+    const anchor = this.touch ? C.TOUCH_CAMERA_ANCHOR : C.CAMERA_ANCHOR;
     if (this.arenaLocked && this.arena) {
-      cam.scrollY += (this.arena.top - cam.scrollY) * Math.min(1, dt * 4);
+      // Арена целиком в кадре; если экран ниже арены (телефон) — камера ходит за героем внутри неё.
+      const lowest = Math.max(this.arena.top, this.arena.bottom - viewH + this.cameraDrop());
+      const arenaTarget = Phaser.Math.Clamp(this.player.y - viewH * anchor, this.arena.top, lowest);
+      cam.scrollY += (arenaTarget - cam.scrollY) * Math.min(1, dt * 4);
       return;
     }
-    const target = Phaser.Math.Clamp(this.player.y - viewHeight(this) * C.CAMERA_ANCHOR, 0, this.plan.length - viewHeight(this));
+    const target = Phaser.Math.Clamp(this.player.y - viewH * anchor, 0, this.plan.length - viewH + this.cameraDrop());
     cam.scrollY += (target - cam.scrollY) * Math.min(1, dt * 8);
   }
 
@@ -1260,7 +1346,7 @@ export class GameScene extends Phaser.Scene {
       a.y += a.vy * dt;
       a.life -= dt;
 
-      const offscreen = a.y < cam.scrollY - 40 || a.y > cam.scrollY + viewHeight(this) + 40 || a.x < 0 || a.x > C.GAME_WIDTH;
+      const offscreen = a.y < cam.scrollY - 40 || a.y > cam.scrollY + this.worldViewH() + 40 || a.x < 0 || a.x > C.GAME_WIDTH;
       if (offscreen) a.life = 0;
       if (a.life <= 0) continue;
 
@@ -1466,7 +1552,7 @@ export class GameScene extends Phaser.Scene {
     for (const e of this.enemies) {
       if (e.dead) continue;
       if (!e.awake) {
-        if (e.kind !== 'boss' && this.levelTime > C.START_GRACE && e.y > cam.scrollY + C.WAKE_INSET && e.y < cam.scrollY + viewHeight(this)) this.wake(e);
+        if (e.kind !== 'boss' && this.levelTime > C.START_GRACE && e.y > cam.scrollY + C.WAKE_INSET && e.y < cam.scrollY + this.worldViewH()) this.wake(e);
         // Спящий враг за экраном: просто прячем, без анимации.
         if (!e.awake && !this.isOnScreen(e.y)) {
           e.sprite.setVisible(false);
@@ -1748,7 +1834,7 @@ export class GameScene extends Phaser.Scene {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.life -= dt;
-      if (s.y > cam.scrollY + viewHeight(this) + 60 || s.y < cam.scrollY - 200 || s.x < 0 || s.x > C.GAME_WIDTH) s.life = 0;
+      if (s.y > cam.scrollY + this.worldViewH() + 60 || s.y < cam.scrollY - 200 || s.x < 0 || s.x > C.GAME_WIDTH) s.life = 0;
       if (!s.high && this.obstacles.some((o) => Math.hypot(o.x - s.x, o.y - s.y) < o.r)) {
         s.life = 0;
         this.dust.explode(3, s.x, s.y);
@@ -2060,6 +2146,7 @@ export class GameScene extends Phaser.Scene {
     saveRun(run);
     const cam = this.cameras.main;
     cam.fadeOut(450, 20, 10, 30);
+    this.uiCam?.fadeOut(450, 20, 10, 30);
     cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => this.scene.restart({ run }));
   }
 
@@ -2119,6 +2206,7 @@ export class GameScene extends Phaser.Scene {
     at(9900, () => {
       const cam = this.cameras.main;
       cam.fadeOut(1100, 255, 246, 225);
+      this.uiCam?.fadeOut(1100, 255, 246, 225);
       cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => this.scene.start('EndScene', { run: this.run }));
     });
   }
@@ -2166,7 +2254,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private heliArrive(): void {
-    const body = this.add.image(C.GAME_WIDTH / 2 + viewWidth(this) / 2 + 200, -150, 'heli').setDepth(C.DEPTH.overlay - 7).setAngle(-8);
+    const body = this.add.image(C.GAME_WIDTH / 2 + this.worldViewW() / 2 + 200, -150, 'heli').setDepth(C.DEPTH.overlay - 7).setAngle(-8);
     const rotor = this.add.image(body.x, body.y, 'rotor').setDepth(C.DEPTH.overlay - 6).setAlpha(0.8);
     const shadow = this.add.image(body.x, body.y, 'shadow').setDepth(C.DEPTH.shadow).setScale(3, 2).setAlpha(0);
     const ladder = this.add.graphics().setDepth(C.DEPTH.overlay - 8);
@@ -2204,7 +2292,7 @@ export class GameScene extends Phaser.Scene {
     const heli = this.heli;
     if (!heli) return;
     sfx.gateOpen();
-    const dx = -viewWidth(this);
+    const dx = -this.worldViewW();
     const dy = -520;
     this.tweens.add({ targets: heli.body, x: heli.body.x + dx, y: heli.body.y + dy, angle: -14, duration: 2600, ease: 'Sine.In' });
     this.tweens.add({ targets: this.player.sprite, x: this.player.sprite.x + dx, y: this.player.sprite.y + dy, duration: 2600, ease: 'Sine.In' });

@@ -7,6 +7,7 @@ import {
   JOYSTICK_KNOB_RADIUS,
   JOYSTICK_RADIUS,
   TOUCH_BUTTON_RADIUS,
+  TOUCH_LABEL_SIZE,
   TOUCH_LAYOUT_KEY,
   TOUCH_PAUSE_RADIUS,
   TOUCH_SIZE_MAX,
@@ -33,16 +34,12 @@ const LABELS: Record<TouchElementId, string> = { joystick: 'Джойстик', r
 
 /** По умолчанию: джойстик внизу по центру, кнопки — под правым большим пальцем. */
 const DEFAULT_LAYOUT: TouchLayout = {
-  joystick: { x: 0.5, y: 0.8, size: 1 },
-  roll: { x: 0.9, y: 0.7, size: 1 },
-  crouch: { x: 0.78, y: 0.86, size: 1 },
+  joystick: { x: 0.5, y: 0.78, size: 1 },
+  roll: { x: 0.88, y: 0.66, size: 1 },
+  crouch: { x: 0.77, y: 0.84, size: 1 },
 };
 
-/** Телефон или планшет (основной ввод — палец). Для проверки на ПК: адрес с ?touch. */
-export function isTouchDevice(): boolean {
-  if (new URLSearchParams(window.location.search).has('touch')) return true;
-  return window.matchMedia?.('(pointer: coarse)').matches ?? false;
-}
+export { isTouchDevice } from './view';
 
 function clampPos(v: number): number {
   return Phaser.Math.Clamp(v, 0.04, 0.96);
@@ -89,8 +86,20 @@ function saveLayout(layout: TouchLayout): void {
   }
 }
 
-function radiusOf(id: TouchElementId, size: number): number {
-  return (id === 'joystick' ? JOYSTICK_RADIUS : TOUCH_BUTTON_RADIUS) * size;
+/** Сколько логических пикселей в одном CSS-пикселе экрана. */
+function cssUnit(scene: Phaser.Scene): number {
+  return viewWidth(scene) / Math.max(1, scene.scale.displaySize.width);
+}
+
+function radiusOf(scene: Phaser.Scene, id: TouchElementId, size: number): number {
+  return (id === 'joystick' ? JOYSTICK_RADIUS : TOUCH_BUTTON_RADIUS) * size * cssUnit(scene);
+}
+
+/** Подписи рисуются крупным шрифтом и уменьшаются — так они чёткие при любом масштабе. */
+const LABEL_FONT_PX = 32;
+
+function labelScale(scene: Phaser.Scene, size: number): number {
+  return (TOUCH_LABEL_SIZE * size * cssUnit(scene)) / LABEL_FONT_PX;
 }
 
 function screenPos(scene: Phaser.Scene, e: ElementLayout): { x: number; y: number } {
@@ -104,12 +113,13 @@ function pointerPos(p: Phaser.Input.Pointer): { x: number; y: number } {
 
 function makeLabel(scene: Phaser.Scene, text: string, depth: number): Phaser.GameObjects.Text {
   return scene.add.text(0, 0, text, {
-    fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: '#fff6dc', stroke: '#1a1020', strokeThickness: 4,
+    fontFamily: FONT, fontSize: `${LABEL_FONT_PX}px`, fontStyle: 'bold', color: '#fff6dc', stroke: '#1a1020', strokeThickness: 7,
   }).setOrigin(0.5).setScrollFactor(0).setDepth(depth);
 }
 
 /** Рисует элемент управления; knob — смещение ручки джойстика (-1..1). */
 function drawElement(
+  scene: Phaser.Scene,
   g: Phaser.GameObjects.Graphics,
   id: TouchElementId,
   x: number,
@@ -117,14 +127,14 @@ function drawElement(
   size: number,
   opts: { pressed?: boolean; selected?: boolean; knobX?: number; knobY?: number } = {},
 ): void {
-  const r = radiusOf(id, size);
+  const r = radiusOf(scene, id, size);
   const outline = opts.selected ? 0xffd23f : 0xffffff;
   g.fillStyle(opts.pressed ? 0xffd23f : 0x1a1020, opts.pressed ? 0.45 : 0.35).fillCircle(x, y, r);
   g.lineStyle(opts.selected ? 4 : 3, outline, opts.selected ? 1 : 0.55).strokeCircle(x, y, r);
   if (id !== 'joystick') return;
   const kx = x + (opts.knobX ?? 0) * r;
   const ky = y + (opts.knobY ?? 0) * r;
-  g.fillStyle(0xffffff, 0.55).fillCircle(kx, ky, JOYSTICK_KNOB_RADIUS * size);
+  g.fillStyle(0xffffff, 0.55).fillCircle(kx, ky, JOYSTICK_KNOB_RADIUS * size * cssUnit(scene));
 }
 
 /** Джойстик и кнопки во время игры. Мультитач: можно идти и жать кнопку одновременно. */
@@ -145,7 +155,7 @@ export class TouchControls {
     const depth = DEPTH.hud + 5;
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(depth);
     this.labels = { roll: makeLabel(scene, 'Рывок', depth + 1), crouch: makeLabel(scene, 'Присед', depth + 1) };
-    this.pauseLabel = makeLabel(scene, 'II', depth + 1).setFontSize(18);
+    this.pauseLabel = makeLabel(scene, 'II', depth + 1);
 
     const input = scene.input;
     input.on(Phaser.Input.Events.POINTER_DOWN, this.onDown, this);
@@ -208,22 +218,29 @@ export class TouchControls {
     g.clear();
     const stick = this.layout.joystick;
     const sp = screenPos(this.scene, stick);
-    drawElement(g, 'joystick', sp.x, sp.y, stick.size, { knobX: this.stickX, knobY: this.stickY, pressed: this.stickPointer !== -1 });
+    drawElement(this.scene, g, 'joystick', sp.x, sp.y, stick.size, { knobX: this.stickX, knobY: this.stickY, pressed: this.stickPointer !== -1 });
     for (const id of ['roll', 'crouch'] as const) {
       const e = this.layout[id];
       const p = screenPos(this.scene, e);
       const pressed = id === 'roll' ? this.rollFlash > 0 : this.crouching;
-      drawElement(g, id, p.x, p.y, e.size, { pressed });
-      this.labels[id].setPosition(p.x, p.y).setScale(e.size);
+      drawElement(this.scene, g, id, p.x, p.y, e.size, { pressed });
+      this.labels[id].setPosition(p.x, p.y).setScale(labelScale(this.scene, e.size));
     }
     const pause = this.pausePos();
-    g.fillStyle(0x1a1020, 0.4).fillCircle(pause.x, pause.y, TOUCH_PAUSE_RADIUS);
-    g.lineStyle(2, 0xffffff, 0.55).strokeCircle(pause.x, pause.y, TOUCH_PAUSE_RADIUS);
-    this.pauseLabel.setPosition(pause.x, pause.y);
+    const pr = this.pauseRadius();
+    g.fillStyle(0x1a1020, 0.4).fillCircle(pause.x, pause.y, pr);
+    g.lineStyle(2, 0xffffff, 0.55).strokeCircle(pause.x, pause.y, pr);
+    this.pauseLabel.setPosition(pause.x, pause.y).setScale(labelScale(this.scene, 1.3));
   }
 
+  /** Справа под уровнем и фазой суток — сверху по центру имя и полоса босса. */
   private pausePos(): { x: number; y: number } {
-    return { x: viewWidth(this.scene) / 2, y: TOUCH_PAUSE_RADIUS + 6 };
+    const r = this.pauseRadius();
+    return { x: viewWidth(this.scene) - r - 14, y: 84 + r };
+  }
+
+  private pauseRadius(): number {
+    return TOUCH_PAUSE_RADIUS * cssUnit(this.scene);
   }
 
   private onDown(pointer: Phaser.Input.Pointer): void {
@@ -231,14 +248,14 @@ export class TouchControls {
     sfx.unlock();
     const { x, y } = pointerPos(pointer);
     const pause = this.pausePos();
-    if (Math.hypot(x - pause.x, y - pause.y) <= TOUCH_PAUSE_RADIUS * 1.5) {
+    if (Math.hypot(x - pause.x, y - pause.y) <= this.pauseRadius() * 1.5) {
       this.onPause();
       return;
     }
     for (const id of ['roll', 'crouch'] as const) {
       const e = this.layout[id];
       const p = screenPos(this.scene, e);
-      if (Math.hypot(x - p.x, y - p.y) > radiusOf(id, e.size) * 1.15) continue;
+      if (Math.hypot(x - p.x, y - p.y) > radiusOf(this.scene, id, e.size) * 1.15) continue;
       if (id === 'roll') {
         this.rollQueued = true;
         this.rollFlash = 0.15;
@@ -249,7 +266,7 @@ export class TouchControls {
     }
     const stick = this.layout.joystick;
     const sp = screenPos(this.scene, stick);
-    if (this.stickPointer === -1 && Math.hypot(x - sp.x, y - sp.y) <= radiusOf('joystick', stick.size) * JOYSTICK_GRAB_MUL) {
+    if (this.stickPointer === -1 && Math.hypot(x - sp.x, y - sp.y) <= radiusOf(this.scene, 'joystick', stick.size) * JOYSTICK_GRAB_MUL) {
       this.stickPointer = pointer.id;
       this.setStick(x, y);
     }
@@ -273,7 +290,7 @@ export class TouchControls {
   private setStick(x: number, y: number): void {
     const stick = this.layout.joystick;
     const sp = screenPos(this.scene, stick);
-    const r = radiusOf('joystick', stick.size);
+    const r = radiusOf(this.scene, 'joystick', stick.size);
     let dx = (x - sp.x) / r;
     let dy = (y - sp.y) / r;
     const len = Math.hypot(dx, dy);
@@ -337,8 +354,9 @@ export function openTouchEditor(scene: Phaser.Scene, onClose: () => void): void 
     IDS.forEach((id, i) => {
       const e = layout[id];
       const p = screenPos(scene, e);
-      drawElement(g, id, p.x, p.y, e.size, { selected: id === selected });
-      labels[i].setPosition(p.x, id === 'joystick' ? p.y + radiusOf(id, e.size) + 14 : p.y).setScale(e.size);
+      drawElement(scene, g, id, p.x, p.y, e.size, { selected: id === selected });
+      const labelY = id === 'joystick' ? p.y + radiusOf(scene, id, e.size) + 10 * cssUnit(scene) : p.y;
+      labels[i].setPosition(p.x, labelY).setScale(labelScale(scene, e.size));
     });
     sizeText.setText(`${LABELS[selected]} · размер ${Math.round(layout[selected].size * 100)}%`);
   };
@@ -371,7 +389,7 @@ export function openTouchEditor(scene: Phaser.Scene, onClose: () => void): void 
     for (const id of IDS) {
       const p = screenPos(scene, layout[id]);
       const d = Math.hypot(x - p.x, y - p.y);
-      if (d <= radiusOf(id, layout[id].size) * 1.2 && d < bestD) {
+      if (d <= radiusOf(scene, id, layout[id].size) * 1.2 && d < bestD) {
         best = id;
         bestD = d;
       }
