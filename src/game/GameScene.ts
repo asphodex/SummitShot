@@ -147,6 +147,8 @@ export class GameScene extends Phaser.Scene {
   /** Сценарий обучения — только на уровне 0. */
   private tutorial: Tutorial | null = null;
   private levelTime = 0;
+  /** Самая высокая точка, до которой игрок поднялся на этом уровне (в пикселях от старта). */
+  private levelClimb = 0;
   /** Лазерные прицелы снайперов. */
   private aimLines!: Phaser.GameObjects.Graphics;
   /** Объекты меню паузы (null — пауза закрыта). */
@@ -233,6 +235,7 @@ export class GameScene extends Phaser.Scene {
     this.exitTimer = 0;
     this.exitStarted = false;
     this.levelTime = 0;
+    this.levelClimb = 0;
     this.pauseParts = null;
     this.orbitHitAt.clear();
     this.thornsHitAt.clear();
@@ -331,11 +334,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Смена суток по времени игры: экран темнеет, тёплые враги слабеют, ледяные крепнут.
-   * Часы — это run.stats.time: они идут только в активной игре, на паузе стоят.
+   * Смена суток по мере подъёма: экран темнеет, тёплые враги слабеют, ледяные крепнут.
+   * Считается весь подъём за забег, на текущем уровне — только самая высокая точка.
    */
   private updateDayCycle(initial = false): void {
-    const night = this.plan.isTutorial ? 0 : nightness(this.run.stats.time);
+    // При первом вызове игрока ещё нет (мир строится раньше), а подъём на уровне — 0.
+    // Старт игрока — plan.length - 130 (см. createPlayer).
+    if (!initial) this.levelClimb = Math.max(this.levelClimb, this.plan.length - 130 - this.player.y);
+    const climb = this.totalClimb();
+    const night = this.plan.isTutorial ? 0 : nightness(climb);
     this.sky.setFillStyle(skyColor(night), 1);
     // Ночью туман редеет — светлая дымка в темноте выглядела бы засветом.
     this.fog.setAlpha(C.FOG_ALPHA * (1 - night * 0.6));
@@ -343,12 +350,16 @@ export class GameScene extends Phaser.Scene {
     const phase = phaseOf(night);
     if (phase === this.dayPhase && !initial) return;
     this.dayPhase = phase;
-    const dawn = isDawn(this.run.stats.time);
+    const dawn = isDawn(climb);
     this.phaseText.setText(phaseHint(phase, dawn));
     if (initial) return;
     sfx.gateOpen();
     const sub = phase === 'day' ? 'Враги снова в обычной силе' : 'Тёплые враги слабеют, ледяные — крепнут';
     this.showPhaseToast(phaseTitle(phase, dawn), sub);
+  }
+
+  private totalClimb(): number {
+    return this.run.stats.climb + this.levelClimb;
   }
 
   /** Сила врага в текущей фазе суток: <1 — ослаблен, >1 — усилен. */
@@ -2027,6 +2038,7 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'exit';
     const run = this.run;
     if (this.plan.isTutorial) markTutorialDone();
+    else run.stats.climb = this.totalClimb();
     run.level += 1;
     run.hp = Math.min(run.maxHp, run.hp + run.maxHp * 0.1);
     saveRun(run);

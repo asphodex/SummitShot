@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-  DAY_CYCLE_SECONDS,
+  CLIMB_PER_PHASE,
   DUSK_EFFECT,
   DUSK_FROM,
   NIGHT_EFFECT,
@@ -10,10 +10,9 @@ import {
 } from './constants';
 
 /**
- * Смена суток: условия меняются от проведённого в игре времени.
- * За DAY_CYCLE_SECONDS день полностью сменяется ночью, ещё за столько же — обратно.
- * Время берётся из статистики забега, а она идёт только во время активной игры
- * (на паузе, при выборе усиления и в катсценах часы стоят).
+ * Смена суток: условия меняются по мере подъёма в гору.
+ * За CLIMB_PER_PHASE пикселей подъёма день полностью сменяется ночью, ещё за столько же — обратно.
+ * Учитывается только самая высокая точка уровня, так что отступлением день не вернуть.
  */
 
 export type DayPhase = 'day' | 'dusk' | 'night';
@@ -21,9 +20,9 @@ export type DayPhase = 'day' | 'dusk' | 'night';
 /** Тёплые ("летние") враги слабеют к ночи, ледяные — крепнут. */
 export type Temperature = 'warm' | 'cold' | 'neutral';
 
-/** 0 — полдень, 1 — глубокая ночь. Треугольная волна: туда за 60 с и обратно за 60 с. */
-export function nightness(playSeconds: number): number {
-  const t = (playSeconds / DAY_CYCLE_SECONDS) % 2;
+/** 0 — полдень, 1 — глубокая ночь. Треугольная волна: к ночи за CLIMB_PER_PHASE и обратно за столько же. */
+export function nightness(climb: number): number {
+  const t = (climb / CLIMB_PER_PHASE) % 2;
   return t < 1 ? t : 2 - t;
 }
 
@@ -55,8 +54,8 @@ export const PHASE_TITLE: Record<DayPhase, string> = {
 };
 
 /** Ночь уже отступает — средняя фаза на обратном пути называется "Рассвет". */
-export function isDawn(playSeconds: number): boolean {
-  return (playSeconds / DAY_CYCLE_SECONDS) % 2 >= 1;
+export function isDawn(climb: number): boolean {
+  return (climb / CLIMB_PER_PHASE) % 2 >= 1;
 }
 
 export function phaseTitle(phase: DayPhase, dawn: boolean): string {

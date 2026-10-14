@@ -39,6 +39,8 @@ export type AbilityId =
 /** Статистика забега — показывается на финальном экране. */
 export interface RunStats {
   time: number;
+  /** Сколько пикселей пройдено вверх за завершённые уровни — от этого зависит время суток. */
+  climb: number;
   arrows: number;
   hits: number;
   crits: number;
@@ -85,7 +87,7 @@ export interface RunState {
 
 export function newStats(): RunStats {
   return {
-    time: 0, arrows: 0, hits: 0, crits: 0, damageDealt: 0, damageTaken: 0,
+    time: 0, climb: 0, arrows: 0, hits: 0, crits: 0, damageDealt: 0, damageTaken: 0,
     rolls: 0, dodges: 0, orbs: 0, bosses: 0, killsByKind: {}, bossTimes: [],
   };
 }
