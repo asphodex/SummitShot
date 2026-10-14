@@ -43,7 +43,7 @@ export class Hud {
       .setDepth(DEPTH.hud + 1);
     this.hpText = text(BAR_X + 8, 14, 13);
     this.levelText = text(0, 12, 18).setOrigin(1, 0);
-    this.levelText.setText(`${biomeName} · ${level}/${LEVELS_PER_SEASON}`);
+    this.levelText.setText(level === 0 ? 'Обучение' : `${biomeName} · ${level}/${LEVELS_PER_SEASON}`);
     this.bossText = text(0, 50, 18, '#ffe0a0').setOrigin(0.5, 0).setVisible(false);
     this.abilityText = text(16, 62, 18, '#fff6d0');
   }

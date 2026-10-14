@@ -463,6 +463,7 @@ const ENEMY_COLORS: Record<EnemyKind, CreatureColors> = {
   healer: { main: '#e0453f', dark: '#9a2a2a', light: '#ff8a7a', extra: '#f0e0c0' },
   sniper: { main: '#3f6a3a', dark: '#24401f', light: '#6a9a5a', extra: '#ffe03f' },
   mole: { main: '#7a5a48', dark: '#4a3428', light: '#e8a8a0', extra: '#ff8aa0' },
+  dummy: { main: '#e8453c', dark: '#9a6a42', light: '#f8efe0', extra: '#c48f5c' },
 };
 
 /** Основной цвет врага — для частиц при смерти. */
@@ -698,6 +699,18 @@ function drawEnemy(ctx: Ctx, kind: EnemyKind, c: CreatureColors): void {
       ellipse(ctx, 32, 31, 7, 5, '#1a1020');
       ellipse(ctx, 29, 31, 1.8, 1.4, c.extra);
       ellipse(ctx, 35, 31, 1.8, 1.4, c.extra);
+      break;
+    }
+    case 'dummy': {
+      // Соломенная мишень на деревянном столбике.
+      roundRect(ctx, 29, 30, 6, 26, 2, c.dark);
+      roundRect(ctx, 29, 30, 3, 26, 2, c.extra);
+      ellipse(ctx, 32, 56, 10, 3, c.dark);
+      ellipse(ctx, 32, 27, 17, 17, c.dark);
+      ellipse(ctx, 32, 26, 16, 16, c.light);
+      ellipse(ctx, 32, 26, 11.5, 11.5, c.main);
+      ellipse(ctx, 32, 26, 7.5, 7.5, c.light);
+      ellipse(ctx, 32, 26, 3.5, 3.5, c.main);
       break;
     }
     case 'mole': {

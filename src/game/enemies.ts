@@ -36,6 +36,8 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
   bomber: { cls: 'special', common: false, unlock: 1, pack: 2, hp: 16, speed: 150, radius: 13, damage: 0, xp: 5, flying: false },
   blob: { cls: 'tank', common: false, unlock: 1, pack: 1, hp: 36, speed: 90, radius: 17, damage: 14, xp: 6, flying: false },
   turret: { cls: 'ranged', common: false, unlock: 1, pack: 1, hp: 40, speed: 0, radius: 16, damage: 10, xp: 6, flying: false },
+  // Учебная мишень: стоит на месте и не кусается. Ни в один микс не попадает.
+  dummy: { cls: 'special', common: false, unlock: 99, pack: 1, hp: 20, speed: 0, radius: 18, damage: 0, xp: 2, flying: false },
   // Общие — открываются по ходу сезона и встречаются везде.
   gnat: { cls: 'flyer', common: true, unlock: 2, pack: 4, hp: 7, speed: 175, radius: 9, damage: 6, xp: 1, flying: true },
   healer: { cls: 'special', common: true, unlock: 9, pack: 1, hp: 26, speed: 85, radius: 14, damage: 8, xp: 8, flying: false },
@@ -162,8 +164,15 @@ export function thinkEnemy(e: Enemy, w: EnemyWorld, dt: number): void {
     case 'healer': return thinkHealer(e, w);
     case 'sniper': return thinkSniper(e, w);
     case 'mole': return thinkMole(e, w);
+    case 'dummy': return thinkDummy(e);
     case 'boss': return thinkBoss(e, w, dt);
   }
+}
+
+/** Мишень стоит на месте; стреляет за неё сам сценарий обучения. */
+function thinkDummy(e: Enemy): void {
+  e.vx = 0;
+  e.vy = 0;
 }
 
 /** Держаться на дистанции и обходить игрока по кругу. */

@@ -6,6 +6,7 @@ import {
   SAFE_EXIT,
   SAFE_START,
   SIDE_WALL,
+  TUTORIAL_BEAM_Y,
 } from './constants';
 import { ENEMY_DEFS } from './enemies';
 import type { EnemyKind, LayoutStyle, LevelPlan } from './season';
@@ -90,6 +91,8 @@ export function generateLayout(plan: LevelPlan): Layout {
     arena: null,
   };
 
+  if (plan.isTutorial) return tutorialLayout(layout, rng, plan.length);
+
   const top = plan.isBoss ? BOSS_ARENA_HEIGHT + 120 : EXIT_Y + SAFE_EXIT;
   const bottom = plan.length - SAFE_START;
   const style = plan.layoutStyle;
@@ -106,6 +109,16 @@ export function generateLayout(plan: LevelPlan): Layout {
 
   addSpawns(layout, rng, plan, plan.isBoss ? BOSS_ARENA_HEIGHT + 200 : top, bottom);
   addDecals(layout, rng, plan.length);
+  return layout;
+}
+
+/** Обучение: пустая тропа и бревно во всю ширину. Мишени ставит сценарий обучения. */
+function tutorialLayout(layout: Layout, rng: Rng, length: number): Layout {
+  layout.beams.push({ x1: layout.minX - 30, x2: layout.maxX + 30, y: TUTORIAL_BEAM_Y });
+  for (const [x, y] of [[layout.minX + 40, 1050], [layout.maxX - 40, 900], [layout.minX + 60, 380], [layout.maxX - 50, 300]]) {
+    layout.obstacles.push({ kind: rng.frac() < 0.5 ? 'tree' : 'rock', x, y, r: 18, scale: 0.9, variant: 1 });
+  }
+  addDecals(layout, rng, length);
   return layout;
 }
 

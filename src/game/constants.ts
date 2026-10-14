@@ -154,6 +154,17 @@ export const SHELTER_DAMAGE_MUL = 0.5;
 export const LIGHT_ROLL_COST_MUL = 0.6;
 
 export const SAVE_KEY = 'summit-shot-save-v1';
+/** Отметка, что обучение пройдено — второй раз его не показываем. */
+export const TUTORIAL_KEY = 'summit-shot-tutorial-done';
+
+// --- Обучение (уровень 0) --------------------------------------------------------
+
+export const TUTORIAL_LENGTH = 1500;
+/** Бревно во всю ширину прохода — под ним нужно проползти в приседе. */
+export const TUTORIAL_BEAM_Y = 620;
+/** Как часто мишень-стрелок стреляет на шаге с перекатом. */
+export const TUTORIAL_SHOT_INTERVAL = 1.3;
+export const TUTORIAL_SHOT_SPEED = 230;
 export const GAME_TITLE = 'SUMMIT SHOT';
 
 export const DEPTH = {

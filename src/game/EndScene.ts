@@ -11,7 +11,7 @@ import { setupView, viewHeight, viewWidth } from './view';
 const ENEMY_NAMES: Record<EnemyKind, string> = {
   crab: 'Краб', spitter: 'Плевун', bat: 'Летучая мышь', turtle: 'Черепаха', charger: 'Горный козёл',
   mole: 'Крот', shooter: 'Скорпион', bomber: 'Жук-бомба', blob: 'Лава-слизень', turret: 'Тотем',
-  gnat: 'Мошкара', healer: 'Шаман', sniper: 'Снайпер',
+  gnat: 'Мошкара', healer: 'Шаман', sniper: 'Снайпер', dummy: 'Мишень',
 };
 
 const TABS = ['Итоги', 'Враги', 'Билд'];

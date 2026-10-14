@@ -13,6 +13,7 @@ import {
   SAVE_KEY,
   SPREAD_POWER,
   SPREAD_UNLOCK_LEVEL,
+  TUTORIAL_KEY,
 } from './constants';
 
 export type UpgradeId =
@@ -92,7 +93,8 @@ export function newStats(): RunStats {
 export function newRun(season: number): RunState {
   return {
     season,
-    level: 1,
+    // Самый первый забег начинается с обучения (уровень 0).
+    level: season === 0 && !isTutorialDone() ? 0 : 1,
     seed: Math.random().toString(36).slice(2),
     hp: PLAYER_BASE_HP,
     maxHp: PLAYER_BASE_HP,
@@ -305,6 +307,22 @@ export function loadRun(): RunState | null {
     return { ...base, ...saved, stats: { ...base.stats, ...saved.stats } };
   } catch {
     return null;
+  }
+}
+
+export function isTutorialDone(): boolean {
+  try {
+    return localStorage.getItem(TUTORIAL_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markTutorialDone(): void {
+  try {
+    localStorage.setItem(TUTORIAL_KEY, '1');
+  } catch {
+    // ignore
   }
 }
 

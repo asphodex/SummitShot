@@ -11,6 +11,7 @@ import {
   type EnemyWorld,
 } from './enemies';
 import { Hud } from './hud';
+import { Tutorial } from './tutorial';
 import { BEAM_HALF_THICKNESS, generateLayout, type Arena, type Layout } from './level';
 import { getSeason, planLevel, type EnemyKind, type LevelPlan } from './season';
 import { sfx } from './sfx';
@@ -29,6 +30,7 @@ import {
   clearRun,
   enemyHpMultiplier,
   loadRun,
+  markTutorialDone,
   newRun,
   rollChoices,
   saveRun,
@@ -49,6 +51,8 @@ interface Arrow {
   x: number; y: number; vx: number; vy: number;
   life: number; damage: number; pierce: number; bounces: number;
   hits: Enemy[]; stuck: number; sprite: Img; shadow: Img;
+  /** Выпущена кликом мыши (нужно обучению). */
+  mouse: boolean;
 }
 
 interface Shot {
@@ -136,6 +140,11 @@ export class GameScene extends Phaser.Scene {
   private exitTimer = 0;
   private exitStarted = false;
   private lastShotSfx = 0;
+  private lastShotByMouse = false;
+  /** Клик мышью, который ещё не превратился в выстрел. */
+  private mouseShotQueued = false;
+  /** Сценарий обучения — только на уровне 0. */
+  private tutorial: Tutorial | null = null;
   private levelTime = 0;
   /** Лазерные прицелы снайперов. */
   private aimLines!: Phaser.GameObjects.Graphics;
@@ -189,6 +198,7 @@ export class GameScene extends Phaser.Scene {
     this.createWorldApi();
     this.setupInput();
     this.hud = new Hud(this, this.plan.biome.name, run.level);
+    if (this.plan.isTutorial) this.startTutorial();
 
     cam.scrollY = this.plan.length - viewHeight(this);
     cam.fadeIn(450, 20, 10, 30);
@@ -221,6 +231,8 @@ export class GameScene extends Phaser.Scene {
     this.thornsHitAt.clear();
     this.bossStartTime = 0;
     this.heli = null;
+    this.tutorial = null;
+    this.mouseShotQueued = false;
     this.popPool = [];
     this.fpsText = null;
     this.popActive = 0;
@@ -531,6 +543,32 @@ export class GameScene extends Phaser.Scene {
     return Phaser.Math.Linear(C.BOSS_HP_BOOST_FIRST, C.BOSS_HP_BOOST_LAST, t);
   }
 
+  private startTutorial(): void {
+    this.tutorial = new Tutorial({
+      scene: this,
+      playerX: () => this.player.x,
+      playerY: () => this.player.y,
+      spawnDummy: (x, y) => {
+        const e = this.createEnemy('dummy', x, y);
+        e.awake = true;
+        this.puff(x, y, 0xffffff, 8);
+        return e;
+      },
+      removeDummy: (e) => {
+        e.dead = true;
+        this.puff(e.x, e.y, 0xffffff, 8);
+        e.sprite.destroy();
+        e.shadow.destroy();
+      },
+      fireShot: (x, y, angle, speed) => this.fireShot(x, y, angle, speed, false),
+    });
+  }
+
+  private skipTutorial(): void {
+    if (!this.tutorial || this.mode !== 'play') return;
+    this.finishLevel();
+  }
+
   private damageScale(): number {
     return 0.75 + this.plan.difficulty * 0.25;
   }
@@ -617,10 +655,15 @@ export class GameScene extends Phaser.Scene {
       fire: K.SPACE, roll: K.SHIFT, crouch: K.C, crouch2: K.CTRL,
     }) as Record<KeyName, Phaser.Input.Keyboard.Key>;
     this.input.mouse?.disableContextMenu();
-    this.input.on('pointerdown', () => sfx.unlock());
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      sfx.unlock();
+      // Запоминаем клик: даже очень короткое нажатие (между кадрами) даст выстрел.
+      if (pointer.leftButtonDown()) this.mouseShotQueued = true;
+    });
 
     kb.on('keydown-ESC', () => this.togglePause());
     kb.on('keydown-F', () => this.toggleFps());
+    kb.on('keydown-ENTER', () => this.skipTutorial());
     kb.on('keydown-P', () => this.togglePause());
     // Окно потеряло фокус — ставим паузу, чтобы не умереть, пока игрок отошёл.
     const onBlur = () => {
@@ -673,6 +716,7 @@ export class GameScene extends Phaser.Scene {
     this.updateArrows(dt);
     this.updateArmor(dt);
     this.updateEnemies(dt);
+    this.tutorial?.update(dt);
     this.updateShots(dt);
     this.updateOrbs(dt);
     this.updateBlasts(dt);
@@ -835,6 +879,7 @@ export class GameScene extends Phaser.Scene {
     if (this.gate && this.arena && this.boss && !this.boss.dead) {
       p.y = Math.max(p.y, this.arena.gateY + 20 + r);
     }
+    if (this.tutorial) p.y = Math.max(p.y, this.tutorial.minPlayerY());
   }
 
   private pushOutOfObstacles(o: { x: number; y: number }, r: number): boolean {
@@ -968,7 +1013,8 @@ export class GameScene extends Phaser.Scene {
     const p = this.player;
     if (p.roll > 0 || p.invuln > 0 || this.mode !== 'play') return;
     if (this.tryShieldBlock()) return;
-    const dmg = Math.round(amount * (this.has('shelter') && p.crouch ? C.SHELTER_DAMAGE_MUL : 1));
+    // В обучении попадания только показываются — здоровье не тратится.
+    const dmg = this.tutorial ? 0 : Math.round(amount * (this.has('shelter') && p.crouch ? C.SHELTER_DAMAGE_MUL : 1));
     this.run.hp -= dmg;
     this.run.stats.damageTaken += dmg;
     p.invuln = C.HURT_INVULNERABILITY;
@@ -982,7 +1028,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(180, 0.012);
     this.hurtFlash = 0.85;
     this.hitstop = Math.max(this.hitstop, 0.06);
-    this.popText(p.x, p.y - 44, `-${dmg}`, '#ff4f5f', 22);
+    if (dmg > 0) this.popText(p.x, p.y - 44, `-${dmg}`, '#ff4f5f', 22);
     if (this.run.hp <= 0 && !this.trySecondWind()) this.die();
   }
 
@@ -1028,12 +1074,15 @@ export class GameScene extends Phaser.Scene {
     if (p.burstLeft <= 0) this.updateIdleAim();
 
     const pointer = this.input.activePointer;
-    const wantFire = this.keys.fire.isDown || pointer.leftButtonDown();
+    const mouse = pointer.leftButtonDown() || this.mouseShotQueued;
+    const wantFire = this.keys.fire.isDown || mouse;
     if (!wantFire || p.roll > 0 || p.fireCooldown > 0) return;
+    this.mouseShotQueued = false;
 
     sfx.unlock();
     p.fireCooldown = C.FIRE_INTERVAL / this.run.fireRateMul;
-    const angle = this.aimAngle(pointer.leftButtonDown());
+    this.lastShotByMouse = mouse;
+    const angle = this.aimAngle(this.lastShotByMouse);
     p.aim = angle;
     p.volley += 1;
     this.fireSet(angle);
@@ -1115,7 +1164,7 @@ export class GameScene extends Phaser.Scene {
       damage: C.ARROW_DAMAGE * this.run.damageMul * damageMul,
       pierce: this.has('pierce') ? 1 : 0,
       bounces: this.has('ricochet') ? 1 : 0,
-      hits: [], stuck: 0, sprite, shadow,
+      hits: [], stuck: 0, sprite, shadow, mouse: this.lastShotByMouse,
     });
   }
 
@@ -1147,7 +1196,7 @@ export class GameScene extends Phaser.Scene {
       for (const e of this.enemies) {
         if (e.dead || a.hits.includes(e) || isHidden(e) || (e.kind === 'boss' && !e.awake)) continue;
         if (Math.hypot(e.x - a.x, e.y - a.y) > e.radius + C.ARROW_RADIUS) continue;
-        if (isShielded(e)) {
+        if (isShielded(e) || (e.kind === 'dummy' && this.tutorial && !this.tutorial.canHitDummy(a.mouse))) {
           this.deflectArrow(a, e);
           break;
         }
@@ -1531,9 +1580,13 @@ export class GameScene extends Phaser.Scene {
 
   private killEnemy(e: Enemy): void {
     e.dead = true;
-    this.run.kills += 1;
-    const byKind = this.run.stats.killsByKind;
-    byKind[e.kind] = (byKind[e.kind] ?? 0) + 1;
+    if (e.kind === 'dummy') {
+      this.tutorial?.onDummyKilled(e);
+    } else {
+      this.run.kills += 1;
+      const byKind = this.run.stats.killsByKind;
+      byKind[e.kind] = (byKind[e.kind] ?? 0) + 1;
+    }
     const tint = enemyTint(e.kind);
 
     this.chunks.particleTint = tint;
@@ -1629,6 +1682,7 @@ export class GameScene extends Phaser.Scene {
         if (!s.dodged && (ducked || p.roll > 0)) {
           s.dodged = true;
           this.run.stats.dodges += 1;
+          if (p.roll > 0) this.tutorial?.onRollDodge();
         }
       }
       const h = s.high ? C.HIGH_SHOT_HEIGHT : 8;
@@ -1814,6 +1868,7 @@ export class GameScene extends Phaser.Scene {
 
   private resumePlay(): void {
     this.mode = 'play';
+    this.mouseShotQueued = false;
     this.player.invuln = Math.max(this.player.invuln, 0.8);
   }
 
@@ -1914,6 +1969,7 @@ export class GameScene extends Phaser.Scene {
   private finishLevel(): void {
     this.mode = 'exit';
     const run = this.run;
+    if (this.plan.isTutorial) markTutorialDone();
     run.level += 1;
     run.hp = Math.min(run.maxHp, run.hp + run.maxHp * 0.1);
     saveRun(run);
@@ -2140,7 +2196,11 @@ export class GameScene extends Phaser.Scene {
     }));
     this.pauseButton(fixed, 484, 'Главное меню', false, () => this.leavePause(() => this.scene.start('MenuScene')));
 
-    fixed(this.add.text(cx, viewHeight(this) - 50, 'Esc — продолжить   ·   WASD — идти   ·   Shift — перекат   ·   C / ПКМ — присесть', {
+    const controls = [
+      'WASD — идти   ·   Пробел / ЛКМ — стрелять   ·   Shift — перекат',
+      'Ctrl / C / ПКМ — присесть   ·   Esc — продолжить',
+    ].join('\n');
+    fixed(this.add.text(cx, viewHeight(this) - 62, controls, {
       ...style, fontSize: '15px', color: '#b8a8b8', strokeThickness: 3,
     }).setOrigin(0.5));
     this.pauseParts = parts;
@@ -2192,6 +2252,7 @@ export class GameScene extends Phaser.Scene {
   private closePause(): void {
     this.destroyPause();
     this.mode = 'play';
+    this.mouseShotQueued = false;
     this.player.invuln = Math.max(this.player.invuln, 0.5);
     sfx.pause();
     // Если пока стояли на паузе накопились выборы (например, после босса) — показываем.
@@ -2257,8 +2318,8 @@ export class GameScene extends Phaser.Scene {
 
   private showBanner(title?: string, subtitle?: string): void {
     const plan = this.plan;
-    const main = title ?? plan.biome.name;
-    const sub = subtitle ?? (plan.isBoss ? `Уровень ${plan.level} · логово босса` : `Уровень ${plan.level} из ${C.LEVELS_PER_SEASON}`);
+    const main = title ?? (plan.isTutorial ? 'Обучение' : plan.biome.name);
+    const sub = subtitle ?? (plan.isTutorial ? 'Перед восхождением' : plan.isBoss ? `Уровень ${plan.level} · логово босса` : `Уровень ${plan.level} из ${C.LEVELS_PER_SEASON}`);
     const style = { fontFamily: C.FONT, fontStyle: 'bold', stroke: '#1a1020' };
     const big = this.add.text(viewWidth(this) / 2, 190, main, { ...style, fontSize: '54px', color: '#fff6dc', strokeThickness: 8 })
       .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.hud + 5).setAlpha(0).setScale(1.4);

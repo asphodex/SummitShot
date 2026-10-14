@@ -5,12 +5,15 @@ import {
   LEVEL_MAX_LENGTH,
   LEVEL_MIN_LENGTH,
   LEVELS_PER_SEASON,
+  TUTORIAL_LENGTH,
 } from './constants';
 import { ALL_ENEMY_KINDS, ENEMY_CLASSES, ENEMY_DEFS } from './enemies';
 
 export type EnemyKind =
   | 'crab' | 'gnat' | 'spitter' | 'bat' | 'turret' | 'charger' | 'bomber'
-  | 'shooter' | 'blob' | 'turtle' | 'healer' | 'sniper' | 'mole';
+  | 'shooter' | 'blob' | 'turtle' | 'healer' | 'sniper' | 'mole'
+  /** Учебная мишень — только на уровне 0. */
+  | 'dummy';
 export type AmbientKind = 'motes' | 'leaves' | 'snow' | 'dust' | 'embers';
 export type TreeShape = 'palm' | 'bush' | 'pine' | 'cactus' | 'spire';
 export type BossPattern = 'burst' | 'fan' | 'spiral' | 'charge' | 'summon' | 'sweep' | 'meteor';
@@ -172,6 +175,8 @@ export interface LevelPlan {
   enemyCount: number;
   enemyKinds: EnemyKind[];
   layoutStyle: LayoutStyle;
+  /** Уровень 0 — обучение. */
+  isTutorial: boolean;
   /** true — враги стоят группами, false — россыпью. */
   packs: boolean;
   /** Множитель силы врагов: растёт по ходу сезона и с каждым сезоном. */
@@ -181,24 +186,31 @@ export interface LevelPlan {
 }
 
 export function isBossLevel(level: number): boolean {
-  return level % BOSS_EVERY === 0;
+  return level > 0 && level % BOSS_EVERY === 0;
+}
+
+/** Номер биома для уровня (уровень 0 — обучение — проходит в первом биоме). */
+function biomeIndexFor(season: number, level: number): number {
+  const count = getSeason(season).biomes.length;
+  return Phaser.Math.Clamp(Math.floor((level - 1) / BOSS_EVERY), 0, count - 1);
 }
 
 export function planLevel(season: number, level: number, seed: string): LevelPlan {
   const rng = new Phaser.Math.RandomDataGenerator([`${seed}:${season}:${level}`]);
   const biomes = getSeason(season).biomes;
-  const biomeIndex = Math.min(Math.floor((level - 1) / BOSS_EVERY), biomes.length - 1);
+  const biomeIndex = biomeIndexFor(season, level);
   const biome = biomes[biomeIndex];
-  const progress = (level - 1) / (LEVELS_PER_SEASON - 1);
+  const progress = Math.max(0, (level - 1) / (LEVELS_PER_SEASON - 1));
   const isBoss = isBossLevel(level);
+  const isTutorial = level === 0;
 
   const baseLength = Phaser.Math.Linear(LEVEL_MIN_LENGTH, LEVEL_MAX_LENGTH * 0.85, progress);
-  const length = isBoss
+  const length = isTutorial ? TUTORIAL_LENGTH : isBoss
     ? BOSS_LEVEL_LENGTH
     : Phaser.Math.Clamp(Math.round(baseLength + rng.between(-450, 600)), LEVEL_MIN_LENGTH, LEVEL_MAX_LENGTH);
 
   const perThousand = 3.4 + progress * 2.6;
-  const enemyCount = isBoss ? 4 : Math.round((length / 1000) * perThousand) + rng.between(0, 2);
+  const enemyCount = isTutorial ? 0 : isBoss ? 4 : Math.round((length / 1000) * perThousand) + rng.between(0, 2);
 
   return {
     season,
@@ -209,7 +221,8 @@ export function planLevel(season: number, level: number, seed: string): LevelPla
     length,
     enemyCount,
     enemyKinds: enemyMixFor(season, level, seed),
-    layoutStyle: isBoss ? 'open' : layoutStyleFor(season, level, seed),
+    layoutStyle: isBoss || isTutorial ? 'open' : layoutStyleFor(season, level, seed),
+    isTutorial,
     packs: rng.frac() < 0.5,
     difficulty: 1 + progress * 2 + season * 0.9,
     obstacleDensity: 7 + progress * 5,
@@ -218,8 +231,7 @@ export function planLevel(season: number, level: number, seed: string): LevelPla
 }
 
 function biomeFor(season: number, level: number): Biome {
-  const biomes = getSeason(season).biomes;
-  return biomes[Math.min(Math.floor((level - 1) / BOSS_EVERY), biomes.length - 1)];
+  return getSeason(season).biomes[biomeIndexFor(season, level)];
 }
 
 function rngFor(seed: string, season: number, level: number, salt: string): Phaser.Math.RandomDataGenerator {
