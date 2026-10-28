@@ -10,7 +10,7 @@ import {
   type Enemy,
   type EnemyWorld,
 } from './enemies';
-import { isDawn, nightness, phaseEffectText, phaseHint, phaseOf, phaseTitle, skyColor, strengthFor, type DayPhase } from './daycycle';
+import { isDawn, nightness, phaseHint, phaseOf, skyColor, strengthFor, type DayPhase } from './daycycle';
 import { Hud } from './hud';
 import { TUNING } from './tuning';
 import { isTouchDevice, openTouchEditor, TouchControls } from './touch';
@@ -253,7 +253,6 @@ export class GameScene extends Phaser.Scene {
     this.thornsHitAt.clear();
     this.bossStartTime = 0;
     this.heli = null;
-    this.bannerUntil = 0;
     this.tutorial = null;
     this.mouseShotQueued = false;
     this.shooter = null;
@@ -368,9 +367,6 @@ export class GameScene extends Phaser.Scene {
     this.phaseText.setText(phaseHint(phase, dawn));
     if (initial) return;
     sfx.gateOpen();
-    const effect = phaseEffectText(phase);
-    const sub = effect ? `Враги: ${effect}` : 'Враги в обычной силе';
-    this.showPhaseToast(phaseTitle(phase, dawn), sub);
   }
 
   private totalClimb(): number {
@@ -695,9 +691,10 @@ export class GameScene extends Phaser.Scene {
       scene: this,
       playerX: () => this.player.x,
       playerY: () => this.player.y,
-      spawnDummy: (x, y) => {
+      spawnDummy: (x, y, hp) => {
         const e = this.createEnemy('dummy', x, y);
         e.awake = true;
+        if (hp !== undefined) e.hp = e.maxHp = hp;
         this.puff(x, y, 0xffffff, 8);
         return e;
       },
@@ -961,6 +958,7 @@ export class GameScene extends Phaser.Scene {
     p.rollHits.clear();
     p.crouch = false;
     p.stamina -= cost;
+    this.tutorial?.onRoll();
     p.staminaDelay = C.STAMINA_REGEN_DELAY;
     p.burstLeft = 0;
     this.run.stats.rolls += 1;
@@ -1234,7 +1232,7 @@ export class GameScene extends Phaser.Scene {
 
     if (p.burstLeft <= 0) this.updateIdleAim();
 
-    const mouse = !this.touch && (this.input.activePointer.leftButtonDown() || this.mouseShotQueued);
+    const mouse = this.mouseFireAllowed() && (this.input.activePointer.leftButtonDown() || this.mouseShotQueued);
     if (!this.wantsFire() || p.roll > 0 || p.fireCooldown > 0) return;
     this.mouseShotQueued = false;
 
@@ -1255,7 +1253,16 @@ export class GameScene extends Phaser.Scene {
   /** Хочет ли игрок стрелять: пробел или ЛКМ; на телефоне — сам, когда рядом есть враг. */
   private wantsFire(): boolean {
     if (this.touch) return this.nearestEnemy(this.player.x, this.player.y, C.AUTO_AIM_RANGE, []) !== null;
+    if (!this.mouseFireAllowed()) {
+      this.mouseShotQueued = false;
+      return this.keys.fire.isDown;
+    }
     return this.keys.fire.isDown || this.input.activePointer.leftButtonDown() || this.mouseShotQueued;
+  }
+
+  /** Мышью не стреляем на телефоне и на шаге обучения, где учат пробел. */
+  private mouseFireAllowed(): boolean {
+    return !this.touch && (this.tutorial?.allowsMouseFire() ?? true);
   }
 
   /** Мышь — стрельба в курсор; пробел — автоприцел в ближайшего врага, иначе вперёд. */
@@ -1852,7 +1859,6 @@ export class GameScene extends Phaser.Scene {
         if (!s.dodged && (ducked || p.roll > 0)) {
           s.dodged = true;
           this.run.stats.dodges += 1;
-          if (p.roll > 0) this.tutorial?.onRollDodge();
         }
       }
       const h = s.high ? C.HIGH_SHOT_HEIGHT : 8;
@@ -2494,31 +2500,7 @@ export class GameScene extends Phaser.Scene {
     this.dust.explode(count, x, y);
   }
 
-  /** Пока висит баннер уровня или босса, плашка смены суток ждёт (время в мс сцены). */
-  private bannerUntil = 0;
-
-  /** Плашка смены фазы суток: ниже и мельче баннера уровня и не накладывается на него. */
-  private showPhaseToast(title: string, subtitle: string): void {
-    const wait = this.bannerUntil - this.time.now;
-    if (wait > 0) {
-      this.time.delayedCall(wait, () => this.showPhaseToast(title, subtitle));
-      return;
-    }
-    const style = { fontFamily: C.FONT, fontStyle: 'bold', stroke: '#1a1020', align: 'center' };
-    const cx = viewWidth(this) / 2;
-    const big = this.add.text(cx, C.PHASE_TOAST_Y, title, { ...style, fontSize: '32px', color: '#fff6dc', strokeThickness: 6 })
-      .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.hud + 4).setAlpha(0);
-    const small = this.add.text(cx, C.PHASE_TOAST_Y + 34, subtitle, { ...style, fontSize: '16px', color: '#ffd8a0', strokeThickness: 4 })
-      .setOrigin(0.5).setScrollFactor(0).setDepth(C.DEPTH.hud + 4).setAlpha(0);
-    this.tweens.add({ targets: [big, small], alpha: 1, duration: 250 });
-    this.tweens.add({
-      targets: [big, small], alpha: 0, y: '-=14', delay: 2000, duration: 450,
-      onComplete: () => { big.destroy(); small.destroy(); },
-    });
-  }
-
   private showBanner(title?: string, subtitle?: string): void {
-    this.bannerUntil = this.time.now + C.BANNER_DURATION_MS;
     const plan = this.plan;
     const main = title ?? (plan.isTutorial ? 'Обучение' : plan.biome.name);
     const sub = subtitle ?? (plan.isTutorial ? 'Перед восхождением' : plan.isBoss ? `Уровень ${plan.level} · логово босса` : `Уровень ${plan.level} из ${C.LEVELS_PER_SEASON}`);

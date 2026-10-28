@@ -181,10 +181,6 @@ export const SKY_DUSK = 0xffb48a;
 export const SKY_NIGHT = 0x5a68b0;
 /** Плотность тумана сверху экрана днём (к ночи он редеет). */
 export const FOG_ALPHA = 0.4;
-/** Где показывается плашка смены суток — ниже баннера уровня. */
-export const PHASE_TOAST_Y = 300;
-/** Сколько висит баннер уровня/босса (плашка смены суток ждёт его). */
-export const BANNER_DURATION_MS = 2300;
 
 export const SAVE_KEY = 'summit-shot-save-v1';
 /** Отметка, что обучение пройдено — второй раз его не показываем. */
@@ -197,9 +193,19 @@ export const TOUCH_LAYOUT_KEY = 'summit-shot-touch-layout';
 export const TUTORIAL_LENGTH = 1500;
 /** Бревно во всю ширину прохода — под ним нужно проползти в приседе. */
 export const TUTORIAL_BEAM_Y = 620;
+/** Второе бревно, выше первого, — его учат проскочить перекатом. */
+export const TUTORIAL_ROLL_BEAM_Y = 420;
+/** Здоровье мишени на шаге с пробелом: столько, чтобы удобнее было зажать, чем жать по разу. */
+export const TUTORIAL_HOLD_DUMMY_HP = 80;
 /** Как часто мишень-стрелок стреляет на шаге с перекатом. */
 export const TUTORIAL_SHOT_INTERVAL = 1.3;
 export const TUTORIAL_SHOT_SPEED = 230;
+/** Сколько перекатов нужно сделать после первого выстрела мишени. */
+export const TUTORIAL_ROLLS = 3;
+/** Блок "Задание" слева, под полосками здоровья и выносливости. */
+export const TUTORIAL_TASK_X = 16;
+export const TUTORIAL_TASK_Y = 64;
+export const TUTORIAL_TASK_WIDTH = 260;
 export const GAME_TITLE = 'SUMMIT SHOT';
 
 // --- Сенсорное управление (телефоны и планшеты) ------------------------------------

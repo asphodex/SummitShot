@@ -7,6 +7,7 @@ import {
   SAFE_START,
   SIDE_WALL,
   TUTORIAL_BEAM_Y,
+  TUTORIAL_ROLL_BEAM_Y,
 } from './constants';
 import { ENEMY_DEFS } from './enemies';
 import type { EnemyKind, LayoutStyle, LevelPlan } from './season';
@@ -112,9 +113,11 @@ export function generateLayout(plan: LevelPlan): Layout {
   return layout;
 }
 
-/** Обучение: пустая тропа и бревно во всю ширину. Мишени ставит сценарий обучения. */
+/** Обучение: пустая тропа и два бревна во всю ширину. Мишени ставит сценарий обучения. */
 function tutorialLayout(layout: Layout, rng: Rng, length: number): Layout {
-  layout.beams.push({ x1: layout.minX - 30, x2: layout.maxX + 30, y: TUTORIAL_BEAM_Y });
+  for (const y of [TUTORIAL_BEAM_Y, TUTORIAL_ROLL_BEAM_Y]) {
+    layout.beams.push({ x1: layout.minX - 30, x2: layout.maxX + 30, y });
+  }
   for (const [x, y] of [[layout.minX + 40, 1050], [layout.maxX - 40, 900], [layout.minX + 60, 380], [layout.maxX - 50, 300]]) {
     layout.obstacles.push({ kind: rng.frac() < 0.5 ? 'tree' : 'rock', x, y, r: 18, scale: 0.9, variant: 1 });
   }

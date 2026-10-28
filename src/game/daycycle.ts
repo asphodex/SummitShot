@@ -46,23 +46,29 @@ export function phaseTitle(phase: DayPhase, dawn: boolean): string {
   return phase === 'dusk' && dawn ? '◑ Рассвет' : PHASE_TITLE[phase];
 }
 
-function percent(mul: number): string {
-  const pct = Math.round((mul - 1) * 100);
-  return pct >= 0 ? `+${pct}%` : `−${-pct}%`;
+/** Иконки типов врагов и стрелки силы в HUD. */
+export const WARM_ICON = '🔥';
+export const COLD_ICON = '❄';
+export const STRONGER_ARROW = '↑';
+export const WEAKER_ARROW = '↓';
+
+/** Иконка со стрелкой, например "❄↑"; пусто, если сила обычная. */
+function strengthMark(icon: string, mul: number): string {
+  if (mul === 1) return '';
+  return icon + (mul > 1 ? STRONGER_ARROW : WEAKER_ARROW);
 }
 
-/** Что фаза делает с врагами, например "тёплые −20% · ледяные +20%"; пусто, если ничего. */
+/** Что фаза делает с врагами, например "☀↓ ❄↑"; пусто, если ничего. */
 export function phaseEffectText(phase: DayPhase): string {
   const { warm, cold } = TUNING.dayCycle.phases[phase];
-  if (warm === 1 && cold === 1) return '';
-  return `тёплые ${percent(warm)} · ледяные ${percent(cold)}`;
+  return [strengthMark(WARM_ICON, warm), strengthMark(COLD_ICON, cold)].filter(Boolean).join(' ');
 }
 
 /** Подпись для HUD: название фазы и что сейчас происходит с врагами. */
 export function phaseHint(phase: DayPhase, dawn: boolean): string {
   const title = phaseTitle(phase, dawn);
   const effect = phaseEffectText(phase);
-  return effect ? `${title} · ${effect}` : title;
+  return effect ? `${title} · Враги: ${effect}` : title;
 }
 
 /**
